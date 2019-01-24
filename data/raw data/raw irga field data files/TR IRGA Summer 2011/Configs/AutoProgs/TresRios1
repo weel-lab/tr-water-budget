@@ -1,0 +1,46 @@
+/*
+
+  AutoProgram
+  Generated Wed Jun 15 2011 13:44:21
+ by AutoProg Builder 1.0b
+ Sequence = "HCbEHCbEHCbEA"
+
+*/
+
+:CHAR defaultFile[] "TresRios1"
+:FLOAT 
+  wait1 30
+  wait2 60
+  wait3 30
+  wait4 60
+  wait5 30
+  wait6 60
+
+:PTR user[]
+{
+ :PTR { wait1 "Min wait time (secs):" }
+ :PTR { wait2 "Max wait time (secs):" }
+ :PTR { wait3 "Min wait time (secs):" }
+ :PTR { wait4 "Max wait time (secs):" }
+ :PTR { wait5 "Min wait time (secs):" }
+ :PTR { wait6 "Max wait time (secs):" }
+}
+
+:FCT main
+{
+ CLEAR
+
+ defaultFile user LPPrompts2 IF RETURN THEN
+LPDefineStability IF RETURN THEN
+ LPPrep
+  UcnAskAll
+   wait1 wait2 LPMeasureTilStable 
+   LPLog
+   UcnAskAll
+   wait3 wait4 LPMeasureTilStable 
+   LPLog
+   UcnAskAll
+   wait5 wait6 LPMeasureTilStable 
+   LPLog
+  LPCleanup
+}

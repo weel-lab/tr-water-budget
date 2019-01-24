@@ -1,0 +1,103 @@
+/*
+  File = /User/Configs/Comps/StdComps_6.1
+*/
+:STATIC 1
+:CHAR s8[] "%8s"
+:STATIC 0
+
+:CHAR
+
+:DOUBLE
+PUB u10 0.000000
+PUB u111 0.000000
+PUB u11 0.000000
+PUB u20 0.000000
+PUB u21 0.000000
+PUB u2213 0.000000
+PUB u2214 0.000000
+PUB u2216 0.000000
+PUB u2218 0.000000
+PUB u221 0.000000
+PUB u222 0.000000
+PUB u223 0.000000
+PUB u224 0.000000
+PUB u225 0.000000
+PUB u226 0.000000
+PUB u22 0.000000
+PUB u23 0.000000
+PUB u24 0.000000
+PUB u25 0.000000
+PUB u27 0.000000
+PUB u30 0.000000
+PUB u35 0.000000
+PUB u36 0.000000
+PUB u38 0.000000
+PUB u39 0.000000
+PUB u51 0.000000
+PUB u52 0.000000
+PUB u53 0.000000
+
+:PTR userList[]
+{
+   :PTR { 10 "fda" s8  u10 g83 "flow / area with units conversion" 0 g13  }
+   :PTR { 111 "BLC_1" s8  u111 g83 "One sided BLC" 0 g13  }
+   :PTR { 11 "BLCond" s8  u11 g83 "Effective BLC" 0 g13  }
+   :PTR { 20 "Trans" s8  u20 g83 "Transpiration (mol/m2/s)" 0 g13  }
+   :PTR { 21 "Trmmol" s8  u21 g83 "Transpiration (mmol/m2/s)" 0 g13  }
+   :PTR { 2213 "Tair_K" s8  u2213 f81 "air temp in K" 0 f11  }
+   :PTR { 2214 "Twall_K" s8  u2214 f81 "Twall temp K" 0 f11  }
+   :PTR { 2216 "R(W/m2)" s8  u2216 g83 "incoming radiation" 0 g13  }
+   :PTR { 2218 "Tl-Ta" s8  u2218 g83 "energy balance delta t" 0 g13  }
+   :PTR { 221 "CTleaf" s8  u221 f82 "Computed leaf temp" 0 f12  }
+   :PTR { 222 "SVTleaf" s8  u222 g83 "SatVap(Tleaf)" 0 g13  }
+   :PTR { 223 "h2o_i" s8  u223 g83 "intercellular h2o" 0 g13  }
+   :PTR { 224 "h20diff" s8  u224 g83 "diff" 0 g13  }
+   :PTR { 225 "CTair" s8  u225 g83 "Computed chamber air temp" 0 g13  }
+   :PTR { 226 "SVTair" s8  u226 g83 "SatVap(Tair)" 0 g13  }
+   :PTR { 22 "CndTotal" s8  u22 g83 "Total conductance" 0 g13  }
+   :PTR { 23 "Cond" s8  u23 g83 "Stomatal cond. (mol/m2/s)" 0 g13  }
+   :PTR { 24 "vp_kPa" s8  u24 g83 "vapor pressure chamber air" 0 g13  }
+   :PTR { 25 "VpdL" s8  u25 g83 "Leaf VPD (SatVap(Tleaf) - eair)" 0 g13  }
+   :PTR { 27 "VpdA" s8  u27 g83 "Air VPD (SatVap(tair) - eair)" 0 g13  }
+   :PTR { 30 "Photo" s8  u30 g83 "Photosynthesis (æmol/m2/s)" 0 g13  }
+   :PTR { 35 "CndCO2" s8  u35 g83 "Total Conductance to CO2" 0 g13  }
+   :PTR { 36 "Ci" s8  u36 g83 "Intercellular CO2 (æmol/mol)" 0 g13  }
+   :PTR { 38 "Ci_Pa" s8  u38 g83 "Intercellular CO2 (Pa)" 0 g13  }
+   :PTR { 39 "Ci/Ca" s8  u39 g83 "Intercellular CO2 / Ambient CO2" 0 g13  }
+   :PTR { 51 "RHsfc" s8  u51 g83 "Surface Humidity (%)" 0 g13  }
+   :PTR { 52 "C2sfc" s8  u52 g83 "Surface CO2 (æmol/mol)" 0 g13  }
+   :PTR { 53 "AHs/Cs" s8  u53 g83 "Ball-Berry parameter " 0 g13  }
+}
+
+
+:FCT ComputeUserValues
+{ $
+ u10 =  (flow_um * 1E-6) / (area_cm2 * 1E-4) 
+ u111 =  area_cm2 * blcSlope + blcOffset 
+ u11 =  u111 * (stom_rat + 1) * (stom_rat + 1) / (stom_rat * stom_rat + 1)
+ u20 = (h2o_2_mm - h2o_1_mm) / (1000.0 - h2o_2_mm) * u10
+ u21 =  u20 * 1E3
+ u2213 = tLeaf_c + 273.15
+ u2214 =  tCham_c + 273.15
+ u2216 =  (parIn_um * f_parIn + parOut_um * f_parOut) * alphaK 
+ u2218 =  (u2216 + 1.0773E-7 * ((u2214 ^ 4) - (u2213 ^ 4)) - u20 * 44100.0)/(u111 * 51.4 + 4.3092E-7 * (u2213 ^ 3)) 
+ u221 =  Tleaf_c + u2218 * doEB
+ u222 =  ( 0.61365 * EXP(17.502 * u221 / (240.97 + u221))) 
+ u223 =  u222 * 1000 / press_kPa 
+ u224 =  u223 - h2o_2_mm
+   $ doEB IF Tleaf_c ELSE Tcham_c Tleaf_c + 2 /  THEN  &u225 = $
+ u226 =  ( 0.61365 * EXP(17.502 * u225 / (240.97 + u225))) 
+   $ u224 0 <> IF 1000 u223 h2o_2_mm + 2 / - u224 / u20 * ELSE 0 THEN  &u22 = $
+   $ u22 0 <> IF 1.0 1.0 u22 / 1.0 u11 / - / ELSE 0 THEN  &u23 = $
+ u24 =  h2O_2_mm * press_kPa / 1000 
+ u25 =  u222 - u24
+ u27 =  u226 - u24
+ u30 =  (co2_1_um - co2_2_um * (1000 - h2o_1_mm) / (1000 - h2o_2_mm)) * u10 
+ u35 =  1.0 / (1.6 / u23 + 1.37 / u11)
+ u36 =  ((u35 - u20/2) * co2_2_um - u30) / (u35 + u20/2)
+ u38 =  u36 * press_kPa * 1E-3
+ u39 =  u36 / co2_2_um 
+ u51 =  (1.0 - (u20 * press_kpa)/u222/u23) * 100
+ u52 =  co2_2_um - u30 / (u11 / 1.35)
+ u53 =  u30 * u51 /100.0 / u52 
+}

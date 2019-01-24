@@ -1,0 +1,512 @@
+mutate(irga_temp = irga_temp_model()) %>%
+mutate(irga_par = ifelse(par_w.k2 > 1, irga_par_model(), 0))
+#calculate ET for each species, as well as two combinations of species (typha and sacstab), in mmol H2O/g*s
+hourly_ET <- hourly_ET %>%
+mutate(sam_et_mmolH2O.g.s = sam_et_model()) %>%
+mutate(tlat_et_mmolH2O.g.s = tlat_et_model()) %>%
+mutate(tdom_et_mmolH2O.g.s = tdom_et_model()) %>%
+mutate(typha_et_mmolH2O.g.s = typha_et_model()) %>%
+mutate(stab_et_mmolH2O.g.s = stab_et_model()) %>%
+mutate(sac_et_mmolH2O.g.s = sac_et_model()) %>%
+mutate(sacstab_et_mmolH2O.g.s = sacstab_et_model()) %>%
+mutate(scal_et_mmolH2O.g.s = scal_et_model())
+#join tables to perform calcs. maybe not necessary but for now this avoids the issues with different total rows in each spreadsheet by joining by "date"
+hourly_ET <- merge(hourly_ET, hourly_biomass, by = c("date")) %>%
+arrange(date)
+#calculate ET for each species per second (multiply previous values by hourly biomass)
+hourly_ET <- hourly_ET %>%
+mutate(sam_et_mmolH2O.s = (sam_et_mmolH2O.g.s * 1000) * sam_bio.kg) %>%
+mutate(typha_et_mmolH2O.s = (typha_et_mmolH2O.g.s * 1000) * typha_bio.kg) %>%
+mutate(sacstab_et_mmolH2O.s = (sacstab_et_mmolH2O.g.s * 1000) * sacstab_bio.kg) %>%
+mutate(scal_et_mmolH2O.s = (scal_et_mmolH2O.g.s * 1000) * scal_bio.kg)
+#perform dimensional analysis to convert from mmolH2O/s to m3 H2O/hr
+hourly_ET <- hourly_ET %>%
+mutate(sam_et_m3H2O.hr = (sam_et_mmolH2O.s * (18.015*3600)/1000000000)) %>%
+mutate(typha_et_m3H2O.hr = (typha_et_mmolH2O.s * (18.015*3600)/1000000000)) %>%
+mutate(sacstab_et_m3H2O.hr = (sacstab_et_mmolH2O.s * (18.015*3600)/1000000000)) %>%
+mutate(scal_et_m3H2O.hr = (scal_et_mmolH2O.s * (18.015*3600)/1000000000))
+#convert all NA in ET values as a result of missing met data to 0
+#hourly_ET[,7:32][is.na(hourly_ET[,7:32])] <- 0
+#create a data frame to calculate and store daily_ET using the hourly_ET data
+daily_ET <- hourly_ET %>%
+group_by(month(date), day(date), year(date)) %>%
+summarize(
+sam_et_m3H2O = sum(sam_et_m3H2O.hr),
+typha_et_m3H2O = sum(typha_et_m3H2O.hr),
+sacstab_et_m3H2O = sum(sacstab_et_m3H2O.hr),
+scal_et_m3H2O = sum(scal_et_m3H2O.hr)
+) %>%
+ungroup() %>%
+mutate(allspp_et_m3H2O = sam_et_m3H2O + typha_et_m3H2O + sacstab_et_m3H2O + scal_et_m3H2O) #add new column that sums ET across all spp
+names(daily_ET)[1:3] <- c("month", "day", "year") #rename first three columns
+#date formatting for daily_ET
+daily_ET <- daily_ET %>%
+mutate(date = paste(month, day, year, sep = "/")) %>%
+mutate(date = mdy(date)) %>%
+arrange(date)
+#QA for daily_ET
+daily_ET$sam_et_m3H2O <- ifelse(daily_ET$sam_et_m3H2O < 0, NA, daily_ET$sam_et_m3H2O)
+daily_ET$typha_et_m3H2O <- ifelse(daily_ET$typha_et_m3H2O < 0, NA, daily_ET$typha_et_m3H2O)
+daily_ET$sacstab_et_m3H2O <- ifelse(daily_ET$sacstab_et_m3H2O < 0, NA, daily_ET$sacstab_et_m3H2O)
+daily_ET$scal_et_m3H2O <- ifelse(daily_ET$scal_et_m3H2O < 0, NA, daily_ET$scal_et_m3H2O)
+daily_ET$allspp_et_m3H2O <- ifelse(daily_ET$allspp_et_m3H2O < 0, NA, daily_ET$allspp_et_m3H2O)
+monthly_ET <- daily_ET %>%
+group_by(month, year) %>%
+summarize(
+sam_et_m3H2O = sum(sam_et_m3H2O, na.rm = TRUE),
+typha_et_m3H2O = sum(typha_et_m3H2O, na.rm = TRUE),
+sacstab_et_m3H2O = sum(sacstab_et_m3H2O, na.rm = TRUE),
+scal_et_m3H2O = sum(scal_et_m3H2O, na.rm = TRUE),
+allspp_et_m3H2O = sum(allspp_et_m3H2O, na.rm = TRUE)
+) %>%
+arrange(year, month) %>%
+ungroup()
+#open water evap calculations
+#calculate additional met variables that are used as inputs to penmann-monteith equation
+hourly_water_evap <- tr_met %>%
+mutate(air_temp_K = air_temp_f + 273) %>%
+mutate(par_mj.m2.hr = par_w.k2*0.0036) %>%
+mutate(bar_press_kPa = bar_press_hg*3.39) %>%
+mutate(slope_vpsatcurve_kPa.K = 0.00000022*exp(0.062*air_temp_K)) %>%
+mutate(psych_constant_kpa.kg = (0.0016286*bar_press_kPa)/2.39) %>%
+mutate(vapor_press_deficit_k = ((1-rh_decimal)*exp(21.07-(5336/air_temp_K))))
+#use penmann-monteith equation to calculate hourly water evap in mm.hr
+hourly_water_evap <- hourly_water_evap %>%
+mutate(hourly_evap_mm = ((slope_vpsatcurve_kPa.K*par_mj.m2.hr)+(psych_constant_kpa.kg*(6.43*(1+0.536*wind_speed_m.s))*vapor_press_deficit_k))/(2.39*(slope_vpsatcurve_kPa.K+psych_constant_kpa.kg)))
+hourly_water_evap[is.na(hourly_water_evap)] <- 0
+#scale hourly evap calculations to days
+daily_water_evap <- hourly_water_evap %>%
+group_by(month(date), day(date), year(date)) %>%
+summarize(
+daily_evap_mm = sum(hourly_evap_mm),
+daily_evap_m3 = (sum(hourly_evap_mm)*210)
+) %>%
+ungroup()
+names(daily_water_evap)[1:3] <- c("month", "day", "year") #rename first three columns
+daily_water_evap <- arrange(daily_water_evap, year, month, day)
+#scale daily evap sums to monthly sums
+monthly_water_evap <- daily_water_evap %>%
+group_by(month, year) %>%
+summarize(
+monthly_evap_m3 = sum(daily_evap_m3)
+) %>%
+arrange(year, month) %>%
+ungroup()
+#WATER BUDGET
+#This chunk will pull together all of the various monthly data from above into one data frame for comparative graphing and output
+water_budget_inputs <- list(monthly_ET, tr_monthly_flows, goodyear_monthly_precip, monthly_water_evap) #creates a list that stores all of the monthly data frames to use as inputes to water_budget
+water_budget <- water_budget_inputs %>%
+Reduce(function(dtf1,dtf2) full_join(dtf1,dtf2,by=c("month", "year")), .) %>%
+mutate(date = paste(month, "01", year, sep = "/")) %>% #make a new date column
+mutate(date = mdy(date)) %>% #reads new date column as date via lubridate package
+select(date, everything()) #moves date to the first column position
+View(water_budget)
+#write certain datasheets as csv to the current working directory
+write.csv(water_budget, file = "/Volumes/GoogleDrive/My Drive/weel/tres rios/datasets/tr-water-budget/results/tr_water_budget.csv")
+tr_nutrient_fluxes <- read.csv('/Volumes/GoogleDrive/My Drive/weel/tres rios/datasets/tr-water-budget/results/tr_water_budget.csv', stringsAsFactors = FALSE)
+View(tr_nutrient_fluxes)
+#note - need to have run all of the tranpsiration analysis code first to update
+tr_water_budget <- read.csv('/Volumes/GoogleDrive/My Drive/weel/tres rios/datasets/tr-water-budget/results/tr_water_budget.csv', stringsAsFactors = FALSE)
+View(whole_system_summary)
+tr_nutrient_fluxes <- merge(tr_water_budget, whole_system_summary, by = c("month", "year")) %>%
+arrange(year, month) %>%
+mutate(date = paste("01", month, year, sep = "/")) %>%
+mutate(date = dmy(date)) %>%
+#reorder columns to put date column first
+select(date, everything())
+View(tr_nutrient_fluxes)
+tr_nutrient_fluxes <- merge(tr_water_budget, whole_system_summary, by = c("month", "year")) %>%
+arrange(year, month) %>%
+mutate(date = paste("01", month, year, sep = "/")) %>%
+mutate(date = dmy(date)) %>%
+#reorder columns to put date column first
+select(date, everything()) %>%
+#get rid of all columns except water flux and nutrients
+select(date, monthly_frw1_inflow_m3, monthly_frw1_outflow_m3, inflow_tn, inflow_tn_se, inflow_tp, inflow_tp_se, outflow_tn, outflow_tn_se, outflow_tp, outflow_tp_se)
+tr_nutrient_fluxes <- merge(tr_water_budget, whole_system_summary, by = c("month", "year")) %>%
+arrange(year, month) %>%
+mutate(date = paste("01", month, year, sep = "/")) %>%
+mutate(date = dmy(date)) %>%
+#reorder columns to put date column first
+select(date, everything())
+tr_water_budget <- read.csv('/Volumes/GoogleDrive/My Drive/weel/tres rios/datasets/tr-water-budget/results/tr_water_budget.csv', stringsAsFactors = FALSE)
+tr_nutrient_fluxes <- merge(tr_water_budget, whole_system_summary, by = c("month", "year")) %>%
+arrange(year, month) %>%
+mutate(date = paste("01", month, year, sep = "/")) %>%
+mutate(date = dmy(date)) %>%
+#reorder columns to put date column first
+select(date, everything()) %>%
+#get rid of all columns except water flux and nutrients
+select(date, monthly_frw1_inflow_m3, monthly_frw1_outflow_m3, inflow_tn, inflow_tn_se, inflow_tp, inflow_tp_se, outflow_tn, outflow_tn_se, outflow_tp, outflow_tp_se, inflow_nh4, inflow_nh4_se, outflow_nh4, outflow_nh4_se)
+tr_water_budget <- read.csv('/Volumes/GoogleDrive/My Drive/weel/tres rios/datasets/tr-water-budget/results/tr_water_budget.csv', stringsAsFactors = FALSE)
+tr_nutrient_fluxes <- merge(tr_water_budget, whole_system_summary, by = c("month", "year")) %>%
+arrange(year, month) %>%
+mutate(date = paste("01", month, year, sep = "/")) %>%
+mutate(date = dmy(date)) %>%
+#reorder columns to put date column first
+select(date, everything()) %>%
+#get rid of all columns except water flux and nutrients
+select(date, monthly_frw1_inflow_m3, monthly_frw1_outflow_m3, inflow_tn, inflow_tn_se, inflow_tp, inflow_tp_se, outflow_tn, outflow_tn_se, outflow_tp, outflow_tp_se, inflow_nh4, inflow_nh4_se, outflow_nh4, outflow_nh4_se) %>%
+#convert waterflux in m3 to L
+mutate(monthly_frw1_inflow_L = monthly_frw1_inflow_m3*1000)
+tr_water_budget <- read.csv('/Volumes/GoogleDrive/My Drive/weel/tres rios/datasets/tr-water-budget/results/tr_water_budget.csv', stringsAsFactors = FALSE)
+tr_nutrient_fluxes <- merge(tr_water_budget, whole_system_summary, by = c("month", "year")) %>%
+arrange(year, month) %>%
+mutate(date = paste("01", month, year, sep = "/")) %>%
+mutate(date = dmy(date)) %>%
+#reorder columns to put date column first
+select(date, everything()) %>%
+#convert waterflux in m3 to L
+mutate(
+monthly_frw1_inflow_L = monthly_frw1_inflow_m3*1000,
+monthly_frw1_outflow_L = monthly_frw1_outflow_m3*1000) %>%
+#get rid of all columns except water flux and nutrients
+select(date, monthly_frw1_inflow_L, monthly_frw1_outflow_L, inflow_tn, inflow_tn_se, inflow_tp, inflow_tp_se, outflow_tn, outflow_tn_se, outflow_tp, outflow_tp_se, inflow_nh4, inflow_nh4_se, outflow_nh4, outflow_nh4_se) %>%
+tr_water_budget <- read.csv('/Volumes/GoogleDrive/My Drive/weel/tres rios/datasets/tr-water-budget/results/tr_water_budget.csv', stringsAsFactors = FALSE)
+tr_water_budget <- read.csv('/Volumes/GoogleDrive/My Drive/weel/tres rios/datasets/tr-water-budget/results/tr_water_budget.csv', stringsAsFactors = FALSE)
+tr_nutrient_fluxes <- merge(tr_water_budget, whole_system_summary, by = c("month", "year")) %>%
+arrange(year, month) %>%
+mutate(date = paste("01", month, year, sep = "/")) %>%
+mutate(date = dmy(date)) %>%
+#reorder columns to put date column first
+select(date, everything()) %>%
+#convert waterflux in m3 to L
+mutate(
+monthly_frw1_inflow_L = monthly_frw1_inflow_m3*1000,
+monthly_frw1_outflow_L = monthly_frw1_outflow_m3*1000) %>%
+#get rid of all columns except water flux and nutrients
+select(date, monthly_frw1_inflow_L, monthly_frw1_outflow_L, inflow_tn, inflow_tn_se, inflow_tp, inflow_tp_se, outflow_tn, outflow_tn_se, outflow_tp, outflow_tp_se, inflow_nh4, inflow_nh4_se, outflow_nh4, outflow_nh4_se)
+tr_water_budget <- read.csv('/Volumes/GoogleDrive/My Drive/weel/tres rios/datasets/tr-water-budget/results/tr_water_budget.csv', stringsAsFactors = FALSE)
+tr_nutrient_fluxes <- merge(tr_water_budget, whole_system_summary, by = c("month", "year")) %>%
+arrange(year, month) %>%
+mutate(date = paste("01", month, year, sep = "/")) %>%
+mutate(date = dmy(date)) %>%
+#reorder columns to put date column first
+select(date, everything()) %>%
+#convert waterflux in m3 to L
+mutate(
+monthly_frw1_inflow_L = monthly_frw1_inflow_m3*1000,
+monthly_frw1_outflow_L = monthly_frw1_outflow_m3*1000) %>%
+#get rid of all columns except water flux and nutrients
+select(date, monthly_frw1_inflow_L, monthly_frw1_outflow_L, inflow_tn, inflow_tn_se, inflow_tp, inflow_tp_se, outflow_tn, outflow_tn_se, outflow_tp, outflow_tp_se, inflow_nh4, inflow_nh4_se, outflow_nh4, outflow_nh4_se) %>%
+#calculate fluxes!
+mutate(
+inflow_tn_flux_kg = (inflow_tn*monthly_frw1_inflow_L)/1000000
+)
+tr_nutrient_fluxes <- merge(tr_water_budget, whole_system_summary, by = c("month", "year")) %>%
+arrange(year, month) %>%
+mutate(date = paste("01", month, year, sep = "/")) %>%
+mutate(date = dmy(date)) %>%
+#reorder columns to put date column first
+select(date, everything()) %>%
+#convert waterflux in m3 to L
+mutate(
+monthly_frw1_inflow_L = monthly_frw1_inflow_m3*1000,
+monthly_frw1_outflow_L = monthly_frw1_outflow_m3*1000) %>%
+#get rid of all columns except water flux and nutrients
+select(date, monthly_frw1_inflow_L, monthly_frw1_outflow_L, inflow_tn, inflow_tn_se, inflow_tp, inflow_tp_se, outflow_tn, outflow_tn_se, outflow_tp, outflow_tp_se, inflow_nh4, inflow_nh4_se, outflow_nh4, outflow_nh4_se) %>%
+#calculate fluxes!
+mutate(
+#tn
+inflow_tn_flux_kg = (inflow_tn*monthly_frw1_inflow_L)/1000000,
+inflow_tn_flux_se_kg = (inflow_tn_se*monthly_frw1_inflow_L)/1000000,
+outflow_tn_flux_kg = (outflow_tn*monthly_frw1_outflow_L)/1000000,
+outflow_tn_flux_se_kg = (outflow_tn_se*monthly_frw1_outflow_L)/1000000,
+#tp
+inflow_tp_flux_kg = (inflow_tp*monthly_frw1_inflow_L)/1000000,
+inflow_tp_flux_se_kg = (inflow_tp_se*monthly_frw1_inflow_L)/1000000,
+outflow_tp_flux_kg = (outflow_tp*monthly_frw1_outflow_L)/1000000,
+outflow_tp_flux_se_kg = (outflow_tp_se*monthly_frw1_outflow_L)/1000000,
+#nh4
+inflow_nh4_flux_kg = (inflow_nh4*monthly_frw1_inflow_L)/1000000,
+inflow_nh4_flux_se_kg = (inflow_nh4_se*monthly_frw1_inflow_L)/1000000,
+outflow_nh4_flux_kg = (outflow_nh4*monthly_frw1_outflow_L)/1000000,
+outflow_nh4_flux_se_kg = (outflow_nh4_se*monthly_frw1_outflow_L)/1000000,
+) %>%
+#get rid of water flux and concentration values
+select(-(monthly_frw1_inflow_L:outflow_nh4_se))
+tr_water_budget <- read.csv('/Volumes/GoogleDrive/My Drive/weel/tres rios/datasets/tr-water-budget/results/tr_water_budget.csv', stringsAsFactors = FALSE)
+tr_nutrient_fluxes <- merge(tr_water_budget, whole_system_summary, by = c("month", "year")) %>%
+arrange(year, month) %>%
+mutate(date = paste("01", month, year, sep = "/")) %>%
+mutate(date = dmy(date)) %>%
+#reorder columns to put date column first
+select(date, everything()) %>%
+#convert waterflux in m3 to L
+mutate(
+monthly_frw1_inflow_L = monthly_frw1_inflow_m3*1000,
+monthly_frw1_outflow_L = monthly_frw1_outflow_m3*1000) %>%
+#get rid of all columns except water flux and nutrients
+select(date, monthly_frw1_inflow_L, monthly_frw1_outflow_L, inflow_tn, inflow_tn_se, inflow_tp, inflow_tp_se, outflow_tn, outflow_tn_se, outflow_tp, outflow_tp_se, inflow_nh4, inflow_nh4_se, outflow_nh4, outflow_nh4_se) %>%
+#calculate fluxes!
+mutate(
+#tn
+inflow_tn_flux_kg = (inflow_tn*monthly_frw1_inflow_L)/1000000,
+inflow_tn_flux_se_kg = (inflow_tn_se*monthly_frw1_inflow_L)/1000000,
+outflow_tn_flux_kg = (outflow_tn*monthly_frw1_outflow_L)/1000000,
+outflow_tn_flux_se_kg = (outflow_tn_se*monthly_frw1_outflow_L)/1000000,
+#tp
+inflow_tp_flux_kg = (inflow_tp*monthly_frw1_inflow_L)/1000000,
+inflow_tp_flux_se_kg = (inflow_tp_se*monthly_frw1_inflow_L)/1000000,
+outflow_tp_flux_kg = (outflow_tp*monthly_frw1_outflow_L)/1000000,
+outflow_tp_flux_se_kg = (outflow_tp_se*monthly_frw1_outflow_L)/1000000,
+#nh4
+inflow_nh4_flux_kg = (inflow_nh4*monthly_frw1_inflow_L)/1000000,
+inflow_nh4_flux_se_kg = (inflow_nh4_se*monthly_frw1_inflow_L)/1000000,
+outflow_nh4_flux_kg = (outflow_nh4*monthly_frw1_outflow_L)/1000000,
+outflow_nh4_flux_se_kg = (outflow_nh4_se*monthly_frw1_outflow_L)/1000000,
+)
+tr_water_budget <- read.csv('/Volumes/GoogleDrive/My Drive/weel/tres rios/datasets/tr-water-budget/results/tr_water_budget.csv', stringsAsFactors = FALSE)
+tr_nutrient_fluxes <- merge(tr_water_budget, whole_system_summary, by = c("month", "year")) %>%
+arrange(year, month) %>%
+mutate(date = paste("01", month, year, sep = "/")) %>%
+mutate(date = dmy(date)) %>%
+#reorder columns to put date column first
+select(date, everything()) %>%
+#convert waterflux in m3 to L
+mutate(
+monthly_frw1_inflow_L = monthly_frw1_inflow_m3*1000,
+monthly_frw1_outflow_L = monthly_frw1_outflow_m3*1000) %>%
+#get rid of all columns except water flux and nutrients
+select(date, monthly_frw1_inflow_L, monthly_frw1_outflow_L, inflow_tn, inflow_tn_se, inflow_tp, inflow_tp_se, outflow_tn, outflow_tn_se, outflow_tp, outflow_tp_se, inflow_nh4, inflow_nh4_se, outflow_nh4, outflow_nh4_se)
+tr_nutrient_fluxes <- tr_nutrient_fluxes %>%
+#tn
+mutate(
+inflow_tn_flux_kg = ((inflow_tn*monthly_frw1_inflow_L)/1000000),
+inflow_tn_flux_se_kg = (inflow_tn_se*monthly_frw1_inflow_L)/1000000,
+outflow_tn_flux_kg = (outflow_tn*monthly_frw1_outflow_L)/1000000,
+outflow_tn_flux_se_kg = (outflow_tn_se*monthly_frw1_outflow_L)/1000000) %>%
+#tp
+mutate(
+inflow_tp_flux_kg = (inflow_tp*monthly_frw1_inflow_L)/1000000,
+inflow_tp_flux_se_kg = (inflow_tp_se*monthly_frw1_inflow_L)/1000000,
+outflow_tp_flux_kg = (outflow_tp*monthly_frw1_outflow_L)/1000000,
+outflow_tp_flux_se_kg = (outflow_tp_se*monthly_frw1_outflow_L)/1000000) %>%
+#nh4
+mutate(
+inflow_nh4_flux_kg = (inflow_nh4*monthly_frw1_inflow_L)/1000000,
+inflow_nh4_flux_se_kg = (inflow_nh4_se*monthly_frw1_inflow_L)/1000000,
+outflow_nh4_flux_kg = (outflow_nh4*monthly_frw1_outflow_L)/1000000,
+outflow_nh4_flux_se_kg = (outflow_nh4_se*monthly_frw1_outflow_L)/1000000)
+#use select to clean up spreadsheet
+tr_nutrient_fluxes <- tr_nutrient_fluxes %>%
+select(-(monthly_frw1_inflow_L:outflow_nh4_se))
+tr_waterqualplot_system_nh4flux <- ggplot(data = tr_nutrient_fluxes, aes(x = date)) +
+#inflow data
+geom_point(aes(y = inflow_nh4_flux_kg, color = "Inflow NH4 Flux"), size = 5, pch = 15)+
+#outflow data
+geom_point(aes(y = outflow_nh4_flux_kg , color = "Outflow NH4 Flux"), size = 5)+
+#formatting
+scale_x_date(date_breaks="1 year", date_labels ="%Y", limit = c(as.Date("2010-12-30"), as.Date("2018-10-01")))+
+labs(x = "Date", y = "Total Ammonium flux (kg/month)")+
+theme(legend.text = element_text(size = 25))+
+theme(legend.position=c(0.7,0.9))+ #first number is left-right (0-1), second number is down-up (0-1)
+theme(legend.key=element_rect(fill='white'))+
+theme(legend.box.spacing=unit(0, "cm"))+
+theme(panel.background = element_rect(fill = 'white'))+
+theme(axis.title=element_text(size=25))+
+theme(axis.line.x = element_line())+
+theme(axis.line.y = element_line())+
+theme(axis.text.x = element_text(size = 25))+
+theme(axis.text.y = element_text(size = 25))+
+theme(plot.margin = unit(c(1, 1, 1, 1), "cm"))+ #top, right, bottom, left
+scale_color_manual("", values = c("Inflow NH4 Flux" = "blue", "Outflow NH4 Flux" = "red"))+
+guides(colour = guide_legend(override.aes = list(shape=c(15, 16))))
+print(tr_waterqualplot_system_nh4flux)
+ggsave("tr_waterqualplot_transect_no3.eps", tr_waterqualplot_transect_no3, width = 12, path = '/Volumes/GoogleDrive/My Drive/weel/tres rios/datasets/tr-water-quality/graphics')
+ggsave("tr_waterqualplot_transect_nh4.eps", tr_waterqualplot_transect_nh4, width = 12, path = '/Volumes/GoogleDrive/My Drive/weel/tres rios/datasets/tr-water-quality/graphics')
+ggsave("tr_waterqualplot_system_nh4.eps", tr_waterqualplot_system_nh4, width = 12, path = '/Volumes/GoogleDrive/My Drive/weel/tres rios/datasets/tr-water-quality/graphics')
+ggsave("tr_waterqualplot_system_tn.eps", tr_waterqualplot_system_tn, width = 12, path = '/Volumes/GoogleDrive/My Drive/weel/tres rios/datasets/tr-water-quality/graphics')
+ggsave("tr_waterqualplot_system_tp.eps", tr_waterqualplot_system_tn, width = 12, path = '/Volumes/GoogleDrive/My Drive/weel/tres rios/datasets/tr-water-quality/graphics')
+ggsave("tr_waterqualplot_system_tnflux.eps", tr_waterqualplot_system_tnflux, width = 12, path = '/Volumes/GoogleDrive/My Drive/weel/tres rios/datasets/tr-water-quality/graphics')
+ggsave("tr_waterqualplot_system_nh4flux.eps", tr_waterqualplot_system_nh4flux, width = 12, path = '/Volumes/GoogleDrive/My Drive/weel/tres rios/datasets/tr-water-quality/graphics')
+tr_waterqualplot_system_tnflux <- ggplot(data = tr_nutrient_fluxes, aes(x = date)) +
+#inflow data
+geom_point(aes(y = inflow_tn_flux_kg, color = "Inflow TN Flux"), size = 5, pch = 15)+
+#outflow data
+geom_point(aes(y = outflow_tn_flux_kg, color = "Outflow TN Flux"), size = 5)+
+#formatting
+scale_x_date(date_breaks="1 year", date_labels ="%Y", limit = c(as.Date("2010-12-30"), as.Date("2018-10-01")))+
+labs(x = "Date", y = "Total Nitrogen flux (kg/month)")+
+theme(legend.text = element_text(size = 25))+
+theme(legend.position=c(0.7,0.9))+ #first number is left-right (0-1), second number is down-up (0-1)
+theme(legend.key=element_rect(fill='white'))+
+theme(legend.box.spacing=unit(0, "cm"))+
+theme(panel.background = element_rect(fill = 'white'))+
+theme(axis.title=element_text(size=25))+
+theme(axis.line.x = element_line())+
+theme(axis.line.y = element_line())+
+theme(axis.text.x = element_text(size = 25))+
+theme(axis.text.y = element_text(size = 25))+
+theme(plot.margin = unit(c(1, 1, 1, 1), "cm"))+ #top, right, bottom, left
+scale_color_manual("",
+values = c("Inflow TN Flux" = "blue", "Outflow TN Flux" = "red"))+
+guides(colour = guide_legend(override.aes = list(shape=c(15, 16))))
+print(tr_waterqualplot_system_tnflux)
+ggsave("tr_waterqualplot_transect_no3.eps", tr_waterqualplot_transect_no3, width = 12, path = '/Volumes/GoogleDrive/My Drive/weel/tres rios/datasets/tr-water-quality/graphics')
+ggsave("tr_waterqualplot_transect_nh4.eps", tr_waterqualplot_transect_nh4, width = 12, path = '/Volumes/GoogleDrive/My Drive/weel/tres rios/datasets/tr-water-quality/graphics')
+ggsave("tr_waterqualplot_system_nh4.eps", tr_waterqualplot_system_nh4, width = 12, path = '/Volumes/GoogleDrive/My Drive/weel/tres rios/datasets/tr-water-quality/graphics')
+ggsave("tr_waterqualplot_system_tn.eps", tr_waterqualplot_system_tn, width = 12, path = '/Volumes/GoogleDrive/My Drive/weel/tres rios/datasets/tr-water-quality/graphics')
+ggsave("tr_waterqualplot_system_tp.eps", tr_waterqualplot_system_tn, width = 12, path = '/Volumes/GoogleDrive/My Drive/weel/tres rios/datasets/tr-water-quality/graphics')
+ggsave("tr_waterqualplot_system_tnflux.eps", tr_waterqualplot_system_tnflux, width = 12, path = '/Volumes/GoogleDrive/My Drive/weel/tres rios/datasets/tr-water-quality/graphics')
+ggsave("tr_waterqualplot_system_nh4flux.eps", tr_waterqualplot_system_nh4flux, width = 12, path = '/Volumes/GoogleDrive/My Drive/weel/tres rios/datasets/tr-water-quality/graphics')
+tr_waterqualplot_system_nh4flux <- ggplot(data = tr_nutrient_fluxes, aes(x = date)) +
+#inflow data
+geom_point(aes(y = inflow_nh4_flux_kg, color = "Inflow NH4 Flux"), size = 5, pch = 15)+
+#outflow data
+geom_point(aes(y = outflow_nh4_flux_kg , color = "Outflow NH4 Flux"), size = 5)+
+#formatting
+scale_x_date(date_breaks="1 year", date_labels ="%Y", limit = c(as.Date("2010-12-30"), as.Date("2018-10-01")))+
+labs(x = "Date", y = "Total Ammonium flux (kg/month)")+
+theme(legend.text = element_text(size = 25))+
+theme(legend.position=c(0.35,0.9))+ #first number is left-right (0-1), second number is down-up (0-1)
+theme(legend.key=element_rect(fill='white'))+
+theme(legend.box.spacing=unit(0, "cm"))+
+theme(panel.background = element_rect(fill = 'white'))+
+theme(axis.title=element_text(size=25))+
+theme(axis.line.x = element_line())+
+theme(axis.line.y = element_line())+
+theme(axis.text.x = element_text(size = 25))+
+theme(axis.text.y = element_text(size = 25))+
+theme(plot.margin = unit(c(1, 1, 1, 1), "cm"))+ #top, right, bottom, left
+scale_color_manual("", values = c("Inflow NH4 Flux" = "blue", "Outflow NH4 Flux" = "red"))+
+guides(colour = guide_legend(override.aes = list(shape=c(15, 16))))
+print(tr_waterqualplot_system_nh4flux)
+ggsave("tr_waterqualplot_system_nh4flux.eps", tr_waterqualplot_system_nh4flux, width = 12, path = '/Volumes/GoogleDrive/My Drive/weel/tres rios/datasets/tr-water-quality/graphics')
+tr_waterqualplot_system_nh4flux <- ggplot(data = tr_nutrient_fluxes, aes(x = date)) +
+#inflow data
+geom_point(aes(y = inflow_nh4_flux_kg, color = "Inflow NH4 Flux"), size = 5, pch = 15)+
+#outflow data
+geom_point(aes(y = outflow_nh4_flux_kg , color = "Outflow NH4 Flux"), size = 5)+
+#formatting
+scale_x_date(date_breaks="1 year", date_labels ="%Y", limit = c(as.Date("2010-12-30"), as.Date("2018-10-01")))+
+labs(x = "Date", y = "Total Ammonium flux (kg/month)")+
+theme(legend.text = element_text(size = 25))+
+theme(legend.position=c(0.25,0.9))+ #first number is left-right (0-1), second number is down-up (0-1)
+theme(legend.key=element_rect(fill='white'))+
+theme(legend.box.spacing=unit(0, "cm"))+
+theme(panel.background = element_rect(fill = 'white'))+
+theme(axis.title=element_text(size=25))+
+theme(axis.line.x = element_line())+
+theme(axis.line.y = element_line())+
+theme(axis.text.x = element_text(size = 25))+
+theme(axis.text.y = element_text(size = 25))+
+theme(plot.margin = unit(c(1, 1, 1, 1), "cm"))+ #top, right, bottom, left
+scale_color_manual("", values = c("Inflow NH4 Flux" = "blue", "Outflow NH4 Flux" = "red"))+
+guides(colour = guide_legend(override.aes = list(shape=c(15, 16))))
+print(tr_waterqualplot_system_nh4flux)
+ggsave("tr_waterqualplot_transect_no3.eps", tr_waterqualplot_transect_no3, width = 12, path = '/Volumes/GoogleDrive/My Drive/weel/tres rios/datasets/tr-water-quality/graphics')
+ggsave("tr_waterqualplot_transect_nh4.eps", tr_waterqualplot_transect_nh4, width = 12, path = '/Volumes/GoogleDrive/My Drive/weel/tres rios/datasets/tr-water-quality/graphics')
+ggsave("tr_waterqualplot_system_nh4.eps", tr_waterqualplot_system_nh4, width = 12, path = '/Volumes/GoogleDrive/My Drive/weel/tres rios/datasets/tr-water-quality/graphics')
+ggsave("tr_waterqualplot_system_tn.eps", tr_waterqualplot_system_tn, width = 12, path = '/Volumes/GoogleDrive/My Drive/weel/tres rios/datasets/tr-water-quality/graphics')
+ggsave("tr_waterqualplot_system_tp.eps", tr_waterqualplot_system_tn, width = 12, path = '/Volumes/GoogleDrive/My Drive/weel/tres rios/datasets/tr-water-quality/graphics')
+ggsave("tr_waterqualplot_system_tnflux.eps", tr_waterqualplot_system_tnflux, width = 12, path = '/Volumes/GoogleDrive/My Drive/weel/tres rios/datasets/tr-water-quality/graphics')
+ggsave("tr_waterqualplot_system_nh4flux.eps", tr_waterqualplot_system_nh4flux, width = 12, path = '/Volumes/GoogleDrive/My Drive/weel/tres rios/datasets/tr-water-quality/graphics')
+tr_waterqualplot_system_tnflux <- ggplot(data = tr_nutrient_fluxes, aes(x = date)) +
+#inflow data
+geom_point(aes(y = inflow_tn_flux_kg, color = "Inflow TN Flux"), size = 5, pch = 15)+
+#outflow data
+geom_point(aes(y = outflow_tn_flux_kg, color = "Outflow TN Flux"), size = 5)+
+#formatting
+scale_x_date(date_breaks="1 year", date_labels ="%Y", limit = c(as.Date("2010-12-30"), as.Date("2018-10-01")))+
+labs(x = "Date", y = "Total Nitrogen flux (kg/month)")+
+theme(legend.text = element_text(size = 25))+
+theme(legend.position=c(0.7,0.9))+ #first number is left-right (0-1), second number is down-up (0-1)
+theme(legend.key=element_rect(fill='white'))+
+theme(legend.box.spacing=unit(0, "cm"))+
+theme(panel.background = element_rect(fill = 'white'))+
+theme(axis.title=element_text(size=25))+
+theme(axis.line.x = element_line())+
+theme(axis.line.y = element_line())+
+theme(axis.text.x = element_text(size = 25))+
+theme(axis.text.y = element_text(size = 25))+
+theme(plot.margin = unit(c(1, 1, 1, 1), "cm"))+ #top, right, bottom, left
+scale_color_manual("",
+values = c("Inflow TN Flux" = "blue", "Outflow TN Flux" = "red"))+
+guides(colour = guide_legend(override.aes = list(shape=c(15, 16))))
+print(tr_waterqualplot_system_tnflux)
+tr_waterqualplot_system_tpflux <- ggplot(data = tr_nutrient_fluxes, aes(x = date)) +
+#inflow data
+geom_point(aes(y = inflow_tp_flux_kg, color = "Inflow TP Flux"), size = 5, pch = 15)+
+#outflow data
+geom_point(aes(y = outflow_tp_flux_kg, color = "Outflow TP Flux"), size = 5)+
+#formatting
+scale_x_date(date_breaks="1 year", date_labels ="%Y", limit = c(as.Date("2010-12-30"), as.Date("2018-10-01")))+
+labs(x = "Date", y = "Total Phosphorus flux (kg/month)")+
+theme(legend.text = element_text(size = 25))+
+theme(legend.position=c(0.7,0.9))+ #first number is left-right (0-1), second number is down-up (0-1)
+theme(legend.key=element_rect(fill='white'))+
+theme(legend.box.spacing=unit(0, "cm"))+
+theme(panel.background = element_rect(fill = 'white'))+
+theme(axis.title=element_text(size=25))+
+theme(axis.line.x = element_line())+
+theme(axis.line.y = element_line())+
+theme(axis.text.x = element_text(size = 25))+
+theme(axis.text.y = element_text(size = 25))+
+theme(plot.margin = unit(c(1, 1, 1, 1), "cm"))+ #top, right, bottom, left
+scale_color_manual("",
+values = c("Inflow TP Flux" = "blue", "Outflow TP Flux" = "red"))+
+guides(colour = guide_legend(override.aes = list(shape=c(15, 16))))
+print(tr_waterqualplot_system_tpflux)
+tr_waterqualplot_system_tpflux <- ggplot(data = tr_nutrient_fluxes, aes(x = date)) +
+#inflow data
+geom_point(aes(y = inflow_tp_flux_kg, color = "Inflow TP Flux"), size = 5, pch = 15)+
+#outflow data
+geom_point(aes(y = outflow_tp_flux_kg, color = "Outflow TP Flux"), size = 5)+
+#formatting
+scale_x_date(date_breaks="1 year", date_labels ="%Y", limit = c(as.Date("2010-12-30"), as.Date("2018-10-01")))+
+labs(x = "Date", y = "Total Phosphorus flux (kg/month)")+
+theme(legend.text = element_text(size = 25))+
+theme(legend.position=c(0.25,0.9))+ #first number is left-right (0-1), second number is down-up (0-1)
+theme(legend.key=element_rect(fill='white'))+
+theme(legend.box.spacing=unit(0, "cm"))+
+theme(panel.background = element_rect(fill = 'white'))+
+theme(axis.title=element_text(size=25))+
+theme(axis.line.x = element_line())+
+theme(axis.line.y = element_line())+
+theme(axis.text.x = element_text(size = 25))+
+theme(axis.text.y = element_text(size = 25))+
+theme(plot.margin = unit(c(1, 1, 1, 1), "cm"))+ #top, right, bottom, left
+scale_color_manual("",
+values = c("Inflow TP Flux" = "blue", "Outflow TP Flux" = "red"))+
+guides(colour = guide_legend(override.aes = list(shape=c(15, 16))))
+print(tr_waterqualplot_system_tpflux)
+tr_waterqualplot_system_tpflux <- ggplot(data = tr_nutrient_fluxes, aes(x = date)) +
+#inflow data
+geom_point(aes(y = inflow_tp_flux_kg, color = "Inflow TP Flux"), size = 5, pch = 15)+
+#outflow data
+geom_point(aes(y = outflow_tp_flux_kg, color = "Outflow TP Flux"), size = 5)+
+#formatting
+scale_x_date(date_breaks="1 year", date_labels ="%Y", limit = c(as.Date("2010-12-30"), as.Date("2018-10-01")))+
+labs(x = "Date", y = "Total Phosphorus flux (kg/month)")+
+theme(legend.text = element_text(size = 25))+
+theme(legend.position=c(0.35,0.9))+ #first number is left-right (0-1), second number is down-up (0-1)
+theme(legend.key=element_rect(fill='white'))+
+theme(legend.box.spacing=unit(0, "cm"))+
+theme(panel.background = element_rect(fill = 'white'))+
+theme(axis.title=element_text(size=25))+
+theme(axis.line.x = element_line())+
+theme(axis.line.y = element_line())+
+theme(axis.text.x = element_text(size = 25))+
+theme(axis.text.y = element_text(size = 25))+
+theme(plot.margin = unit(c(1, 1, 1, 1), "cm"))+ #top, right, bottom, left
+scale_color_manual("",
+values = c("Inflow TP Flux" = "blue", "Outflow TP Flux" = "red"))+
+guides(colour = guide_legend(override.aes = list(shape=c(15, 16))))
+print(tr_waterqualplot_system_tpflux)
+ggsave("tr_waterqualplot_transect_no3.eps", tr_waterqualplot_transect_no3, width = 12, path = '/Volumes/GoogleDrive/My Drive/weel/tres rios/datasets/tr-water-quality/graphics')
+ggsave("tr_waterqualplot_transect_nh4.eps", tr_waterqualplot_transect_nh4, width = 12, path = '/Volumes/GoogleDrive/My Drive/weel/tres rios/datasets/tr-water-quality/graphics')
+ggsave("tr_waterqualplot_system_nh4.eps", tr_waterqualplot_system_nh4, width = 12, path = '/Volumes/GoogleDrive/My Drive/weel/tres rios/datasets/tr-water-quality/graphics')
+ggsave("tr_waterqualplot_system_tn.eps", tr_waterqualplot_system_tn, width = 12, path = '/Volumes/GoogleDrive/My Drive/weel/tres rios/datasets/tr-water-quality/graphics')
+ggsave("tr_waterqualplot_system_tp.eps", tr_waterqualplot_system_tn, width = 12, path = '/Volumes/GoogleDrive/My Drive/weel/tres rios/datasets/tr-water-quality/graphics')
+ggsave("tr_waterqualplot_system_tnflux.eps", tr_waterqualplot_system_tnflux, width = 12, path = '/Volumes/GoogleDrive/My Drive/weel/tres rios/datasets/tr-water-quality/graphics')
+ggsave("tr_waterqualplot_system_tpflux.eps", tr_waterqualplot_system_tpflux, width = 12, path = '/Volumes/GoogleDrive/My Drive/weel/tres rios/datasets/tr-water-quality/graphics')
+ggsave("tr_waterqualplot_system_nh4flux.eps", tr_waterqualplot_system_nh4flux, width = 12, path = '/Volumes/GoogleDrive/My Drive/weel/tres rios/datasets/tr-water-quality/graphics')
+ggsave("tr_waterqualplot_transect_no3.eps", tr_waterqualplot_transect_no3, width = 12, path = '/Volumes/GoogleDrive/My Drive/weel/tres rios/datasets/tr-water-quality/graphics')
+ggsave("tr_waterqualplot_transect_nh4.eps", tr_waterqualplot_transect_nh4, width = 12, path = '/Volumes/GoogleDrive/My Drive/weel/tres rios/datasets/tr-water-quality/graphics')
+ggsave("tr_waterqualplot_system_nh4.eps", tr_waterqualplot_system_nh4, width = 12, path = '/Volumes/GoogleDrive/My Drive/weel/tres rios/datasets/tr-water-quality/graphics')
+ggsave("tr_waterqualplot_system_tn.eps", tr_waterqualplot_system_tn, width = 12, path = '/Volumes/GoogleDrive/My Drive/weel/tres rios/datasets/tr-water-quality/graphics')
+ggsave("tr_waterqualplot_system_tp.eps", tr_waterqualplot_system_tp, width = 12, path = '/Volumes/GoogleDrive/My Drive/weel/tres rios/datasets/tr-water-quality/graphics')
+ggsave("tr_waterqualplot_system_tnflux.eps", tr_waterqualplot_system_tnflux, width = 12, path = '/Volumes/GoogleDrive/My Drive/weel/tres rios/datasets/tr-water-quality/graphics')
+ggsave("tr_waterqualplot_system_tpflux.eps", tr_waterqualplot_system_tpflux, width = 12, path = '/Volumes/GoogleDrive/My Drive/weel/tres rios/datasets/tr-water-quality/graphics')
+ggsave("tr_waterqualplot_system_nh4flux.eps", tr_waterqualplot_system_nh4flux, width = 12, path = '/Volumes/GoogleDrive/My Drive/weel/tres rios/datasets/tr-water-quality/graphics')

@@ -1,0 +1,21 @@
+/* boundary layer
+*/
+##10 "fda" "flow / area with units conversion"
+" (flow_um * 1E-6) / (area_cm2 * 1E-4) "
+
+##11F2 "TChamAir" "Air temp in chamber"
+" tleaf_c "
+
+/* transpiration
+*/
+##20 "Trans" "Transpiration (mol/m2/s)" 
+"(h2o_2_mm - h2o_1_mm) / (1000.0 - h2o_2_mm) * #10" 
+
+##21 "Trmmol" "Transpiration (mmol/m2/s)" 
+" #20 * 1E3"
+
+/* photosynthesis */
+##30 "Photo" "Photosynthesis (æmol/m2/s)" 
+" (co2_1_um - co2_2_um * (1000 - h2o_1_mm) / (1000 - h2o_2_mm)) * #10 "
+
+

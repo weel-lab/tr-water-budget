@@ -1,0 +1,70 @@
+---
+title: "water budget graphics"
+output: html_notebook
+---
+
+*Water Budget Graphics*
+
+This script is used to generate and export various graphics related to the Tres Rios Water Budget
+
+```{r}
+#HOUSEKEEPING
+
+library("ggplot2")
+
+#global graph settings (font size, etc.)
+theme_set(theme_gray(base_size = 28)) #theme_gray is the default theme
+
+#optional - import data (in metric tons)
+#use this if you haven't run the  water budget analysis code and don't have those data frames active in your R work space
+#alternatively, just run the water budget data analysis code first
+#monthly_totals_MT <- read.csv('agpp_monthly_totals_MT.csv', stringsAsFactors = FALSE)
+
+```
+
+
+```{r}
+#daily ET graph
+
+#calls to ggplot and adds default data and x axis, then specific calls to geom_line
+#note that building the plot manually like this requires 
+#1)specifying variable names in each geom_line name to force association of variable name to trend line
+#2)the use of scale_color_manual to force a color to the variable name
+
+daily_ET_plot <- ggplot(data = daily_ET, aes(x = date)) +
+  geom_line(aes(y = allspp_et_m3H2O, color = "Whole System"), size = 1)+
+  #typha
+  geom_line(aes(y = typha_et_m3H2O, color = "Typha spp"), size = 1)+
+  #sacstab
+  geom_line(aes(y = sacstab_et_m3H2O, color = "S. acutus and S. tabernaemontani"), size = 1)+
+  #scal
+  geom_line(aes(y = scal_et_m3H2O, color = "S. californicus"), size = 1)+
+  #sam
+  geom_line(aes(y = sam_et_m3H2O, color = "S. americanus"), size = 1)+
+  #formatting
+  scale_x_date(date_breaks="1 year", date_labels ="%Y", limit = c(as.Date("2010-12-30"), as.Date("2018-12-30")))+ 
+  coord_cartesian(ylim = c(0, 12500))+
+  labs(x = "Date", y = "Daily Transpiration (m3 H20)")+
+  theme(legend.position=c(0.7,0.95))+ #positions read as (x,y), where x = 0 is left, y = 0 is bottom
+  theme(legend.key=element_rect(fill='white'))+
+  theme(legend.box.spacing=unit(0, "cm"))+
+  theme(panel.background = element_rect(fill = 'white'))+
+  theme(axis.line.x = element_line())+
+  theme(axis.line.y = element_line())+
+  theme(plot.margin = unit(c(1, 1, 1, 1), "cm"))+ #top, right, bottom, left
+  scale_color_manual("", 
+                      values = c("Whole System"="black", "Typha spp"="light green", 
+                                 "S. acutus and S. tabernaemontani"="blue", "S. californicus"="red", "S. americanus"="orange"))
+
+print(daily_ET_plot)
+
+
+```
+
+
+```{r}
+#exporting graphics
+
+ggsave("daily_ET.eps", daily_ET_plot, width = 10, path = '/Volumes/GoogleDrive/My Drive/weel/tres rios/datasets/tr-water-budget/graphics')
+
+```

@@ -1,0 +1,92 @@
+/* boundary layer
+*/
+##10 "fda" "flow / area with units conversion"
+" (flow_um * 1E-6) / (area_cm2 * 1E-4) "
+
+##111 "BLC_1" "One sided BLC" 
+" area_cm2 * blcSlope + blcOffset "
+
+##11 "BLCond" "Effective BLC"
+" #111 * (stom_rat + 1) * (stom_rat + 1) / (stom_rat * stom_rat + 1)"
+
+/* transpiration
+*/
+##20 "Trans" "Transpiration (mol/m2/s)" 
+"(h2o_2_mm - h2o_1_mm) / (1000.0 - h2o_2_mm) * #10" 
+
+##21 "Trmmol" "Transpiration (mmol/m2/s)" 
+" #20 * 1E3"
+
+/* energy balance deltaT
+*/
+##2213F1 "Tair_K" "air temp in K" 
+"tLeaf_c + 273.15"
+##2214F1 "Twall_K" "Twall temp K"
+" tCham_c + 273.15"
+##2216 "R(W/m2)" "incoming radiation"
+" (parIn_um * f_parIn + parOut_um * f_parOut) * alphaK "
+
+##2218 "Tl-Ta" "energy balance delta t"
+" (#2216 + 1.0773E-7 * ((#2214 ^ 4) - (#2213 ^ 4)) - #20 * 44100.0)/(#111 * 51.4 + 4.3092E-7 * (#2213 ^ 3)) "
+
+/* leaf temp
+*/
+##221F2 "CTleaf" "Computed leaf temp"
+" Tleaf_c + #2218 * doEB"
+
+/* leaf conductance */
+##222 "SVTleaf" "SatVap(Tleaf)"
+" ( 0.61365 * EXP(17.502 * #221 / (240.97 + #221))) "
+
+##223 "h2o_i" "intercellular h2o"
+" #222 * 1000 / press_kPa "
+
+##224 "h20diff" "diff"
+" #223 - h2o_2_mm"
+
+##225 "CTair" "Computed chamber air temp"
+" $ doEB IF Tleaf_c ELSE Tcham_c Tleaf_c + 2 /  THEN "
+
+##226 "SVTair" "SatVap(Tair)"
+" ( 0.61365 * EXP(17.502 * #225 / (240.97 + #225))) "
+
+##22 "CndTotal" "Total conductance"
+" $ #224 0 <> IF 1000 #223 h2o_2_mm + 2 / - #224 / #20 * ELSE 0 THEN "
+
+##23 "Cond" "Stomatal cond. (mol/m2/s)" 
+" $ #22 0 <> IF 1.0 1.0 #22 / 1.0 #11 / - / ELSE 0 THEN "
+
+##24 "vp_kPa" "vapor pressure chamber air"
+" h2O_2_mm * press_kPa / 1000 "
+
+##25 "VpdL" "Leaf VPD (SatVap(Tleaf) - eair)"
+" #222 - #24"
+
+##27 "VpdA" "Air VPD (SatVap(tair) - eair)"
+" #226 - #24"
+
+/* photosynthesis */
+##30 "Photo" "Photosynthesis (æmol/m2/s)" 
+" (co2_1_um - co2_2_um * (1000 - h2o_1_mm) / (1000 - h2o_2_mm)) * #10 "
+
+##35 "CndCO2" "Total Conductance to CO2" 
+" 1.0 / (1.6 / #23 + 1.37 / #11)"
+
+##36 "Ci" "Intercellular CO2 (æmol/mol)" 
+" ((#35 - #20/2) * co2_2_um - #30) / (#35 + #20/2)"
+
+##38 "Ci_Pa" "Intercellular CO2 (Pa)" 
+" #36 * press_kPa * 1E-3"
+
+##39 "Ci/Ca" "Intercellular CO2 / Ambient CO2"
+" #36 / co2_2_um "
+
+/* ball berry */
+##51 "RHsfc"  "Surface Humidity (%)" 
+" (1.0 - (#20 * press_kpa)/#222/#23) * 100"
+
+##52 "C2sfc"  "Surface CO2 (æmol/mol)" 
+" co2_2_um - #30 / (#11 / 1.35)"
+
+##53 "AHs/Cs" "Ball-Berry parameter " 
+" #30 * #51 /100.0 / #52 "

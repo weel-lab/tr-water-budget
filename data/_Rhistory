@@ -1,0 +1,512 @@
+#troubleshooting/QA
+biomass_qa <- filter(agpp_results, is.na(biomass)) #create a filtered spreadsheet to ID any NA's in biomass
+agpp_results$biomass <- ifelse(is.na(agpp_results$biomass) == TRUE | agpp_results$biomass < 0, 0, agpp_results$biomass) #turns NA's in biomass to 0 for the purposes of downstream calculations
+agpp_results <- agpp_results %>%
+select(date:species, biomass) %>%
+mutate(biomass = as.numeric(biomass)) #converts biomass to numeric
+#QUADRAT SUMS
+#group agpp_results calculations by date, transect, quadrat, species)
+by_transect <- group_by(agpp_results, date, transect, quadrat, species)
+#create a variable to store biomass sums by quadrat
+quadrat_sums <- summarize(by_transect,
+total_measured = sum(biomass), #sums the total biomass actually measured
+quadrat_spp_total = total_measured*4) #multiply measured biomass by 4 (quadrat = 0.25 square meters)
+#spreading quadrat sums out by species
+quadrat_sums <- quadrat_sums %>%
+spread(species, quadrat_spp_total) %>%
+group_by(date, transect, quadrat) %>%
+mutate(total_measured = NULL) #deletes total_measured - no longer necessary
+quadrat_sums[, 4:10][is.na(quadrat_sums[, 4:10])] <- 0 #replaces all NA values with 0
+#create a variable to consolidate quadrat totals for each spp, then across all spp
+quadrat_totals_allspp <- quadrat_sums %>%
+group_by(date, transect, quadrat) %>%
+summarize(
+s_acutus = sum(s_acutus),
+s_americanus = sum(s_americanus),
+s_tabernaemontani = sum(s_tabernaemontani),
+s_californicus = sum(s_californicus),
+s_maritimus = sum(s_maritimus),
+t_latifolia = sum(t_latifolia),
+t_domingensis = sum(t_domingensis)) %>%
+ungroup()
+#summing biomass across all spp
+quadrat_totals_allspp <- quadrat_totals_allspp %>%
+mutate(
+total_measured = (s_acutus + s_americanus + s_tabernaemontani + s_californicus + s_maritimus + t_latifolia + t_domingensis),
+total_biomass = (total_measured*tr_totalarea_quads)/1000)
+#RELATIVE ABUNDANCE
+#create a variable to calculate and store relative abundance by quadrat
+relative_abundance <- quadrat_totals_allspp %>%
+mutate(s_acutus = s_acutus/total_measured, #divide each spp biomass by the total for that quadrat, then replace the original biomass values with relative abundance
+s_americanus = s_americanus/total_measured,
+s_tabernaemontani = s_tabernaemontani/total_measured,
+s_californicus = s_californicus/total_measured,
+s_maritimus = s_maritimus/total_measured,
+t_latifolia = t_latifolia/total_measured,
+t_domingensis = t_domingensis/total_measured)
+relative_abundance[, 4:10][is.na(relative_abundance[, 4:10])] <- 0 #replaces all NaN values with 0 - using is.na because is.nan does not run on data frames
+#create a variable to calculate and store average relative abundance by month
+monthly_relative_abundance <- relative_abundance %>%
+mutate(month = month(date)) %>%
+mutate(year = year(date)) %>%
+group_by(month, year) %>%
+summarize(
+s_acutus = mean(s_acutus),
+s_americanus = mean(s_americanus),
+s_tabernaemontani = mean(s_tabernaemontani),
+s_californicus = mean(s_californicus),
+s_maritimus = mean(s_maritimus),
+t_latifolia = mean(t_latifolia),
+t_domingensis = mean(t_domingensis)) %>%
+arrange(year, month)
+#MONTHLY TOTALS
+#create monthly totals variable
+monthly_totals <- quadrat_totals_allspp %>% #create monthly total spreadsheet and extract columns of interest, then arrange by ascending year order
+mutate(month = month(date)) %>%
+mutate(year = year(date)) %>%
+select(date, month, year, total_biomass) %>% #selects only the columns we are interested in
+group_by(month, year) %>%
+summarize(
+monthly_biomass = sum(total_biomass))
+#arrange monthly totals by year and month, ascending
+monthly_totals <- arrange(monthly_totals, year, month)
+#add in new formatted date colummn to make life easier when graphing downstream
+monthly_totals <- monthly_totals %>%
+mutate(date = paste("01", month, year, sep = "/")) %>%
+mutate(date = dmy(date))
+#ungroup data
+monthly_totals <- ungroup(monthly_totals)
+#bring in monthly relative abundance to monthly totals
+monthly_totals$s_acutus <- monthly_relative_abundance$s_acutus
+monthly_totals$s_americanus <- monthly_relative_abundance$s_americanus
+monthly_totals$s_tabernaemontani <- monthly_relative_abundance$s_tabernaemontani
+monthly_totals$s_californicus <- monthly_relative_abundance$s_californicus
+monthly_totals$s_maritimus <- monthly_relative_abundance$s_maritimus
+monthly_totals$t_latifolia <- monthly_relative_abundance$t_latifolia
+monthly_totals$t_domingensis <- monthly_relative_abundance$t_domingensis
+#calculate monthly total biomass by spp
+monthly_totals <- monthly_totals %>%
+mutate(
+s_acutus = s_acutus*monthly_biomass,
+s_americanus = s_americanus*monthly_biomass,
+s_tabernaemontani = s_tabernaemontani*monthly_biomass,
+s_californicus = s_californicus*monthly_biomass,
+s_maritimus = s_maritimus*monthly_biomass,
+t_latifolia = t_latifolia*monthly_biomass,
+t_domingensis = t_domingensis*monthly_biomass,
+typha_spp = t_latifolia + t_domingensis,
+sac_stab = s_acutus + s_tabernaemontani
+)
+#create a data.frame with monthly totals in metric tons (10^3 kg)
+monthly_totals_MT <- monthly_totals %>%
+mutate(
+monthly_biomass = monthly_biomass/1000,
+s_acutus = s_acutus/1000,
+s_americanus = s_americanus/1000,
+s_tabernaemontani = s_tabernaemontani/1000,
+s_californicus = s_californicus/1000,
+s_maritimus = s_maritimus/1000,
+t_latifolia = t_latifolia/1000,
+t_domingensis = t_domingensis/1000,
+typha_spp = typha_spp/1000,
+sac_stab = typha_spp/1000
+)
+View(quadrat_sums)
+View(monthly_totals_MT)
+#calls ggplot and then builds on various trend lines
+monthly_agpp_MT <- ggplot(data = monthly_totals_MT, aes(x = date)) +
+geom_line(aes(y = monthly_biomass, color = "All species"))+
+geom_point(aes(y = monthly_biomass, color = "All species"))+
+#typha
+geom_line(aes(y = typha_spp, color = "Typha spp"))+
+geom_point(aes(y = typha_spp, color = "Typha spp"))+
+#sacstab
+geom_line(aes(y = sac_stab, color = "S. acutus and S. tabernaemontani"))+
+geom_point(aes(y = sac_stab, color = "S. acutus and S. tabernaemontani"))+
+#scal
+geom_line(aes(y = s_californicus, color = "S. californicus"))+
+geom_point(aes(y = s_californicus, color = "S. californicus"))+
+#sam
+geom_line(aes(y = s_americanus, color = "S. americanus"))+
+geom_point(aes(y = s_americanus, color = "S. americanus"))+
+#formatting
+scale_x_date(date_breaks="1 year", date_labels ="%Y")+
+labs(x = "date", y = "monthly biomass (MT)")+
+theme(legend.position="right")+
+theme(legend.key=element_rect(fill='white'))+
+theme(legend.box.spacing=unit(0, "cm"))+
+theme(panel.background = element_rect(fill = 'white'))+
+theme(axis.line.x = element_line())+
+theme(axis.line.y = element_line())+
+theme(plot.margin = unit(c(1, 1, 1, 1), "cm"))+ #top, right, bottom, left
+scale_color_manual("",
+values = c("All species"="black", "Typha spp"="green",
+"S. acutus and S. tabernaemontani"="blue", "S. californicus"="red", "S. americanus"="orange"))
+print(monthly_agpp_MT)
+#HOUSEKEEPING
+# libraries ----
+library('plyr') # always load plyr before dplyr
+library("dplyr")
+library("tidyr")
+library("stringr")
+library("lubridate")
+#tr met station dat import and formatting
+tr_met <- read.csv('~/Google Drive/WEEL/Tres Rios/water budget/data/tr_metstation_data.csv', stringsAsFactors = FALSE)
+tr_met[tr_met == ''] <- NA #change all missing values to NA
+tr_met[,3:8] <- sapply(tr_met[,3:8], function(x) as.numeric(x))
+tr_met <- tr_met %>%
+mutate(date = paste(date, hour, sep = " ")) %>% #combine date and hour columns
+mutate(date = mdy_hm(date)) #read date column as date formatted via lubridate
+#tr_met quality control
+tr_met <- tr_met %>%
+mutate(air_temp_f = ifelse(air_temp_f >= 130, NA, air_temp_f)) %>%
+mutate(par_w.k2 = ifelse(par_w.k2 >= 1000, NA, par_w.k2)) %>%
+mutate(rh_percent = ifelse(rh_percent >= 101, NA, rh_percent)) %>%
+mutate(wind_speed_m.s = ifelse(wind_speed_m.s >= 40, NA, wind_speed_m.s)) %>%
+mutate(bar_press_hg = ifelse(bar_press_hg >= 35, NA, bar_press_hg))
+#tr_met calculating additional variables and formats
+tr_met <- tr_met %>%
+mutate(air_temp_c = (air_temp_f-32)*(5/9)) %>%
+mutate(rh_decimal = rh_percent/100)
+#goodyear precip data import
+goodyear_daily_precip <- read.csv('~/Google Drive/WEEL/Tres Rios/water budget/data/goodyear_met_jul2011_sep2017.csv')
+goodyear_daily_precip <- mutate(goodyear_daily_precip, date = mdy(date)) #read date column as date formatted via lubridate
+#scale daily goodyear precip data to month
+goodyear_monthly_precip <- goodyear_daily_precip %>%
+group_by(month(date), year(date)) %>%
+summarize(
+monthly_precip_mm = sum(prcp),
+monthly_precip_m3 = ((21*10000)*(0.001*monthly_precip_mm))
+) %>%
+ungroup()
+names(goodyear_monthly_precip)[1:2] <- c("month", "year") #rename date columns
+goodyear_monthly_precip <- arrange(goodyear_monthly_precip, year, month)
+#frw daily flow data import and edits
+tr_daily_flows <- read.csv('~/Google Drive/WEEL/Tres Rios/water budget/data/tr_waterflow_data.csv', stringsAsFactors = FALSE)
+tr_daily_flows[tr_daily_flows == ''] <- NA #change all missing values to NA
+tr_daily_flows[is.na(tr_daily_flows)] <- 0 #change all NA vla values to NA
+tr_daily_flows <- mutate(tr_daily_flows, date = mdy(date)) #read combined date-hour column as date formatted via lubridate
+names(tr_daily_flows)[2:5] <- c("influent_flow_mgd", "frw1_outflow_mgd", "frw2_outflow_mgd", "frw3_outflow_mgd") #uses name to append units to column names
+tr_daily_flows <- tr_daily_flows %>% #calculate a bunch of additional variables and unit conversions from original CoP flow data
+mutate(total_outflow_mgd = frw1_outflow_mgd + frw2_outflow_mgd +frw3_outflow_mgd) %>%
+mutate(frw1_percent_outflow = frw1_outflow_mgd/total_outflow_mgd) %>%
+mutate(frw1_inflow_mgd = frw1_percent_outflow*influent_flow_mgd) %>%
+mutate(frw1_outflow_m3 = (frw1_outflow_mgd*1000000)*0.00379) %>%
+mutate(frw1_inflow_m3 = (frw1_inflow_mgd*1000000)*0.00379) %>%
+mutate(frw1_deficit_m3 =  frw1_inflow_m3 - frw1_outflow_m3)
+#create a data frame to sum and store monthly flow data
+tr_monthly_flows <- tr_daily_flows %>%
+group_by(month(date), year(date)) %>%
+summarize(
+monthly_frw1_outflow_m3 = sum(frw1_outflow_m3),
+monthly_frw1_inflow_m3 = sum(frw1_inflow_m3),
+monthly_frw1_deficit_m3 = sum(frw1_deficit_m3)
+) %>%
+ungroup()
+names(tr_monthly_flows)[1:2] <- c("month", "year") #rename date columns
+tr_monthly_flows <- arrange(tr_monthly_flows, year, month)
+#et data import (data sheet that already contains the CoP weather data)
+hourly_ET <- read.csv('~/Google Drive/WEEL/Tres Rios/water budget/data/time_series_et.csv', stringsAsFactors = FALSE)
+hourly_ET[hourly_ET == ''] <- NA # change all missing values to NA
+#converting data classes
+hourly_ET[,3:27] <- sapply(hourly_ET[,3:27], function(x) as.numeric(as.character(x))) #convert all columns except date and hour to numeric
+hourly_ET$hour <- as.character(hourly_ET$hour) #convert hour column to character (initially integer)
+hourly_ET <- hourly_ET %>%
+mutate(date = paste(date, hour, sep = " ")) %>% #combine date and hour columns
+mutate(date = mdy_h(date)) #read combined date-hour column as date formatted via lubridate
+#hourly biomass data import (stop-gap until I can do this part in R)
+hourly_biomass <- read.csv('~/Google Drive/WEEL/Tres Rios/water budget/data/tr_hourly_biomass.csv', stringsAsFactors = FALSE)
+#converting data classes
+hourly_biomass <- hourly_biomass %>%
+mutate(date = paste(date, hour, sep = " ")) %>% #combine date and hour columns
+mutate(date = mdy_h(date)) #read combined date-hour column as date formatted via lubridate
+#temporary select to remove all columns past TR_PAR to start fresh and program everything in R
+hourly_ET <- select(hourly_ET, 1:4)
+#models
+irga_temp_model <- function(x)
+((0.819*hourly_ET$tr_avg_temp)+9.315)
+irga_par_model <- function(x)
+((hourly_ET$tr_avg_par*0.769)+88.55)
+sam_et_model <- function(x)
+((0.00089*hourly_ET$irga_temp)+(0.0000189*hourly_ET$irga_par)-0.017)
+tlat_et_model <- function(x)
+((0.000305*hourly_ET$irga_temp)+(0.00000616*hourly_ET$irga_par))
+tdom_et_model <- function(x)
+((0.000834*hourly_ET$irga_temp)+(0.0000177*hourly_ET$irga_par))
+typha_et_model <- function(x)
+((0.00032*hourly_ET$irga_temp)+(0.00000613*hourly_ET$irga_par)-0.0051)
+stab_et_model <- function(x)
+((0.00058*hourly_ET$irga_temp)+(0.00002*hourly_ET$irga_par))
+sac_et_model <- function(x)
+((0.00069*hourly_ET$irga_temp)+(0.00002*hourly_ET$irga_par))
+sacstab_et_model <- function(x)
+((0.00089*hourly_ET$irga_temp)+(0.0000189*hourly_ET$irga_par)-0.017)
+scal_et_model <- function(x)
+((0.000634*hourly_ET$irga_temp)+(0.000011*hourly_ET$irga_par)-0.0076)
+#daily ET graph
+#calls to ggplot and adds default data and x axis, then specific calls to geom_line
+#note that building the plot manually like this requires
+#1)specifying variable names in each geom_line name to force association of variable name to trend line
+#2)the use of scale_color_manual to force a color to the variable name
+daily_ET_plot <- ggplot(data = daily_ET, aes(x = date)) +
+geom_line(aes(y = allspp_et_m3H2O, color = "Whole System"))+
+#typha
+geom_line(aes(y = typha_et_m3H2O, color = "Typha spp"))+
+#sacstab
+geom_line(aes(y = sacstab_et_m3H2O, color = "S. acutus and S. tabernaemontani"))+
+#scal
+geom_line(aes(y = scal_et_m3H2O, color = "S. californicus"))+
+#sam
+geom_line(aes(y = sam_et_m3H2O, color = "S. americanus"))+
+#formatting
+scale_x_date(date_breaks="1 year", date_labels ="%Y")+
+coord_cartesian(ylim = c(0, 12000))+
+labs(x = "date", y = "daily transpiration (m3 H20)")+
+theme(legend.position="right")+
+theme(legend.key=element_rect(fill='white'))+
+theme(legend.box.spacing=unit(0, "cm"))+
+theme(panel.background = element_rect(fill = 'white'))+
+theme(axis.line.x = element_line())+
+theme(axis.line.y = element_line())+
+theme(plot.margin = unit(c(1, 1, 1, 1), "cm"))+ #top, right, bottom, left
+scale_color_manual("",
+values = c("Whole System"="black", "Typha spp"="green",
+"S. acutus and S. tabernaemontani"="blue", "S. californicus"="red", "S. americanus"="orange"))
+#HOUSEKEEPING
+# libraries ----
+library('plyr') # always load plyr before dplyr
+library("dplyr")
+library("tidyr")
+library("stringr")
+library("lubridate")
+#tr met station dat import and formatting
+tr_met <- read.csv('~/Google Drive/WEEL/Tres Rios/water budget/data/tr_metstation_data.csv', stringsAsFactors = FALSE)
+tr_met[tr_met == ''] <- NA #change all missing values to NA
+tr_met[,3:8] <- sapply(tr_met[,3:8], function(x) as.numeric(x))
+tr_met <- tr_met %>%
+mutate(date = paste(date, hour, sep = " ")) %>% #combine date and hour columns
+mutate(date = mdy_hm(date)) #read date column as date formatted via lubridate
+#tr_met quality control
+tr_met <- tr_met %>%
+mutate(air_temp_f = ifelse(air_temp_f >= 130, NA, air_temp_f)) %>%
+mutate(par_w.k2 = ifelse(par_w.k2 >= 1000, NA, par_w.k2)) %>%
+mutate(rh_percent = ifelse(rh_percent >= 101, NA, rh_percent)) %>%
+mutate(wind_speed_m.s = ifelse(wind_speed_m.s >= 40, NA, wind_speed_m.s)) %>%
+mutate(bar_press_hg = ifelse(bar_press_hg >= 35, NA, bar_press_hg))
+#tr_met calculating additional variables and formats
+tr_met <- tr_met %>%
+mutate(air_temp_c = (air_temp_f-32)*(5/9)) %>%
+mutate(rh_decimal = rh_percent/100)
+#goodyear precip data import
+goodyear_daily_precip <- read.csv('~/Google Drive/WEEL/Tres Rios/water budget/data/goodyear_met_jul2011_sep2017.csv')
+goodyear_daily_precip <- mutate(goodyear_daily_precip, date = mdy(date)) #read date column as date formatted via lubridate
+#scale daily goodyear precip data to month
+goodyear_monthly_precip <- goodyear_daily_precip %>%
+group_by(month(date), year(date)) %>%
+summarize(
+monthly_precip_mm = sum(prcp),
+monthly_precip_m3 = ((21*10000)*(0.001*monthly_precip_mm))
+) %>%
+ungroup()
+names(goodyear_monthly_precip)[1:2] <- c("month", "year") #rename date columns
+goodyear_monthly_precip <- arrange(goodyear_monthly_precip, year, month)
+#frw daily flow data import and edits
+tr_daily_flows <- read.csv('~/Google Drive/WEEL/Tres Rios/water budget/data/tr_waterflow_data.csv', stringsAsFactors = FALSE)
+tr_daily_flows[tr_daily_flows == ''] <- NA #change all missing values to NA
+tr_daily_flows[is.na(tr_daily_flows)] <- 0 #change all NA vla values to NA
+tr_daily_flows <- mutate(tr_daily_flows, date = mdy(date)) #read combined date-hour column as date formatted via lubridate
+names(tr_daily_flows)[2:5] <- c("influent_flow_mgd", "frw1_outflow_mgd", "frw2_outflow_mgd", "frw3_outflow_mgd") #uses name to append units to column names
+tr_daily_flows <- tr_daily_flows %>% #calculate a bunch of additional variables and unit conversions from original CoP flow data
+mutate(total_outflow_mgd = frw1_outflow_mgd + frw2_outflow_mgd +frw3_outflow_mgd) %>%
+mutate(frw1_percent_outflow = frw1_outflow_mgd/total_outflow_mgd) %>%
+mutate(frw1_inflow_mgd = frw1_percent_outflow*influent_flow_mgd) %>%
+mutate(frw1_outflow_m3 = (frw1_outflow_mgd*1000000)*0.00379) %>%
+mutate(frw1_inflow_m3 = (frw1_inflow_mgd*1000000)*0.00379) %>%
+mutate(frw1_deficit_m3 =  frw1_inflow_m3 - frw1_outflow_m3)
+#create a data frame to sum and store monthly flow data
+tr_monthly_flows <- tr_daily_flows %>%
+group_by(month(date), year(date)) %>%
+summarize(
+monthly_frw1_outflow_m3 = sum(frw1_outflow_m3),
+monthly_frw1_inflow_m3 = sum(frw1_inflow_m3),
+monthly_frw1_deficit_m3 = sum(frw1_deficit_m3)
+) %>%
+ungroup()
+names(tr_monthly_flows)[1:2] <- c("month", "year") #rename date columns
+tr_monthly_flows <- arrange(tr_monthly_flows, year, month)
+#et data import (data sheet that already contains the CoP weather data)
+hourly_ET <- read.csv('~/Google Drive/WEEL/Tres Rios/water budget/data/time_series_et.csv', stringsAsFactors = FALSE)
+hourly_ET[hourly_ET == ''] <- NA # change all missing values to NA
+#converting data classes
+hourly_ET[,3:27] <- sapply(hourly_ET[,3:27], function(x) as.numeric(as.character(x))) #convert all columns except date and hour to numeric
+hourly_ET$hour <- as.character(hourly_ET$hour) #convert hour column to character (initially integer)
+hourly_ET <- hourly_ET %>%
+mutate(date = paste(date, hour, sep = " ")) %>% #combine date and hour columns
+mutate(date = mdy_h(date)) #read combined date-hour column as date formatted via lubridate
+#hourly biomass data import (stop-gap until I can do this part in R)
+hourly_biomass <- read.csv('~/Google Drive/WEEL/Tres Rios/water budget/data/tr_hourly_biomass.csv', stringsAsFactors = FALSE)
+#converting data classes
+hourly_biomass <- hourly_biomass %>%
+mutate(date = paste(date, hour, sep = " ")) %>% #combine date and hour columns
+mutate(date = mdy_h(date)) #read combined date-hour column as date formatted via lubridate
+#temporary select to remove all columns past TR_PAR to start fresh and program everything in R
+hourly_ET <- select(hourly_ET, 1:4)
+#models
+irga_temp_model <- function(x)
+((0.819*hourly_ET$tr_avg_temp)+9.315)
+irga_par_model <- function(x)
+((hourly_ET$tr_avg_par*0.769)+88.55)
+sam_et_model <- function(x)
+((0.00089*hourly_ET$irga_temp)+(0.0000189*hourly_ET$irga_par)-0.017)
+tlat_et_model <- function(x)
+((0.000305*hourly_ET$irga_temp)+(0.00000616*hourly_ET$irga_par))
+tdom_et_model <- function(x)
+((0.000834*hourly_ET$irga_temp)+(0.0000177*hourly_ET$irga_par))
+typha_et_model <- function(x)
+((0.00032*hourly_ET$irga_temp)+(0.00000613*hourly_ET$irga_par)-0.0051)
+stab_et_model <- function(x)
+((0.00058*hourly_ET$irga_temp)+(0.00002*hourly_ET$irga_par))
+sac_et_model <- function(x)
+((0.00069*hourly_ET$irga_temp)+(0.00002*hourly_ET$irga_par))
+sacstab_et_model <- function(x)
+((0.00089*hourly_ET$irga_temp)+(0.0000189*hourly_ET$irga_par)-0.017)
+scal_et_model <- function(x)
+((0.000634*hourly_ET$irga_temp)+(0.000011*hourly_ET$irga_par)-0.0076)
+#TIME SERIES ET
+#calculate IRGA temp and PAR
+hourly_ET <- hourly_ET %>%
+mutate(irga_temp = irga_temp_model()) %>%
+mutate(irga_par = ifelse(tr_avg_par > 1, irga_par_model(), 0))
+#calculate ET for each species, as well as two combinations of species (typha and sacstab), in mmol H2O/g*s
+hourly_ET <- hourly_ET %>%
+mutate(sam_et_mmolH2O.g.s = sam_et_model()) %>%
+mutate(tlat_et_mmolH2O.g.s = tlat_et_model()) %>%
+mutate(tdom_et_mmolH2O.g.s = tdom_et_model()) %>%
+mutate(typha_et_mmolH2O.g.s = typha_et_model()) %>%
+mutate(stab_et_mmolH2O.g.s = stab_et_model()) %>%
+mutate(sac_et_mmolH2O.g.s = sac_et_model()) %>%
+mutate(sacstab_et_mmolH2O.g.s = sacstab_et_model()) %>%
+mutate(scal_et_mmolH2O.g.s = scal_et_model())
+#join tables to perform calcs. maybe not necessary but for now this avoids the issues with different total rows in each spreadsheet by joining by "date"
+hourly_ET <- merge(hourly_ET, hourly_biomass, by = c("date")) %>%
+arrange(date)
+#calculate ET for each species per second (multiply previous values by hourly biomass)
+hourly_ET <- hourly_ET %>%
+mutate(sam_et_mmolH2O.s = (sam_et_mmolH2O.g.s * 1000) * sam_bio.kg) %>%
+mutate(typha_et_mmolH2O.s = (typha_et_mmolH2O.g.s * 1000) * typha_bio.kg) %>%
+mutate(sacstab_et_mmolH2O.s = (sacstab_et_mmolH2O.g.s * 1000) * sacstab_bio.kg) %>%
+mutate(scal_et_mmolH2O.s = (scal_et_mmolH2O.g.s * 1000) * scal_bio.kg)
+#perform dimensional analysis to convert from mmolH2O/s to m3 H2O/hr
+hourly_ET <- hourly_ET %>%
+mutate(sam_et_m3H2O.hr = (sam_et_mmolH2O.s * (18.015*3600)/1000000000)) %>%
+mutate(typha_et_m3H2O.hr = (typha_et_mmolH2O.s * (18.015*3600)/1000000000)) %>%
+mutate(sacstab_et_m3H2O.hr = (sacstab_et_mmolH2O.s * (18.015*3600)/1000000000)) %>%
+mutate(scal_et_m3H2O.hr = (scal_et_mmolH2O.s * (18.015*3600)/1000000000))
+#convert all NA in ET values as a result of missing met data to 0
+hourly_ET[,7:32][is.na(hourly_ET[,7:32])] <- 0
+#daily sums
+daily_ET <- hourly_ET %>%
+group_by(month(date), day(date), year(date)) %>%
+summarize(
+sam_et_m3H2O = sum(sam_et_m3H2O.hr),
+typha_et_m3H2O = sum(typha_et_m3H2O.hr),
+sacstab_et_m3H2O = sum(sacstab_et_m3H2O.hr),
+scal_et_m3H2O = sum(scal_et_m3H2O.hr)
+) %>%
+ungroup() %>%
+mutate(allspp_et_m3H2O = sam_et_m3H2O + typha_et_m3H2O + sacstab_et_m3H2O + scal_et_m3H2O) #add new column that sums ET across all spp
+names(daily_ET)[1:3] <- c("month", "day", "year") #rename first three columns
+daily_ET <- daily_ET %>%
+mutate(date = paste(month, day, year, sep = "/")) %>%
+mutate(date = mdy(date)) %>%
+arrange(date)
+monthly_ET <- daily_ET %>%
+group_by(month, year) %>%
+summarize(
+sam_et_m3H2O = sum(sam_et_m3H2O),
+typha_et_m3H2O = sum(typha_et_m3H2O),
+sacstab_et_m3H2O = sum(sacstab_et_m3H2O),
+scal_et_m3H2O = sum(scal_et_m3H2O),
+allspp_et_m3H2O = sum(allspp_et_m3H2O)
+) %>%
+arrange(year, month) %>%
+ungroup()
+#open water evap calculations
+#calculate additional met variables that are used as inputs to penmann-monteith equation
+hourly_water_evap <- tr_met %>%
+mutate(air_temp_K = air_temp_c + 273) %>%
+mutate(par_mj.m2.hr = par_w.k2*0.0036) %>%
+mutate(bar_press_kPa = bar_press_hg*3.39) %>%
+mutate(slope_vpsatcurve_kPa.K = 0.00000022*exp(0.062*air_temp_K)) %>%
+mutate(psych_constant_kpa.kg = (0.0016286*bar_press_kPa)/2.39) %>%
+mutate(vapor_press_deficit_k = ((1-rh_decimal)*exp(21.07-(5336/air_temp_K))))
+#use penmann-monteith equation to calculate hourly water evap in mm.hr
+hourly_water_evap <- hourly_water_evap %>%
+mutate(hourly_evap_mm = ((slope_vpsatcurve_kPa.K*par_mj.m2.hr)+(psych_constant_kpa.kg*(6.43*(1+0.536*wind_speed_m.s))*vapor_press_deficit_k))/(2.39*(slope_vpsatcurve_kPa.K+psych_constant_kpa.kg)))
+hourly_water_evap[is.na(hourly_water_evap)] <- 0
+#scale hourly evap calculations to days
+daily_water_evap <- hourly_water_evap %>%
+group_by(month(date), day(date), year(date)) %>%
+summarize(
+daily_evap_mm = sum(hourly_evap_mm),
+daily_evap_m3 = (sum(hourly_evap_mm)*210)
+) %>%
+ungroup()
+names(daily_water_evap)[1:3] <- c("month", "day", "year") #rename first three columns
+daily_water_evap <- arrange(daily_water_evap, year, month, day)
+#scale daily evap sums to monthly sums
+monthly_water_evap <- daily_water_evap %>%
+group_by(month, year) %>%
+summarize(
+monthly_evap_m3 = sum(daily_evap_m3)
+) %>%
+arrange(year, month) %>%
+ungroup()
+#WATER BUDGET
+#This chunk will pull together all of the various monthly data from above into one data frame for comparative graphing and output
+water_budget_inputs <- list(monthly_ET, tr_monthly_flows, goodyear_monthly_precip, monthly_water_evap) #creates a list that stores all of the monthly data frames to use as inputes to water_budget
+water_budget <- water_budget_inputs %>%
+Reduce(function(dtf1,dtf2) full_join(dtf1,dtf2,by=c("month", "year")), .) %>%
+mutate(date = paste(month, "01", year, sep = "/")) %>% #make a new date column
+mutate(date = mdy(date)) %>% #reads new date column as date via lubridate package
+select(date, everything()) #moves date to the first column position
+#HOUSEKEEPING
+library("ggplot2")
+#optional - import data (in metric tons)
+#use this if you haven't run the  water budget analysis code and don't have those data frames active in your R work space
+#alternatively, just run the water budget data analysis code first
+#monthly_totals_MT <- read.csv('agpp_monthly_totals_MT.csv', stringsAsFactors = FALSE)
+#daily ET graph
+#calls to ggplot and adds default data and x axis, then specific calls to geom_line
+#note that building the plot manually like this requires
+#1)specifying variable names in each geom_line name to force association of variable name to trend line
+#2)the use of scale_color_manual to force a color to the variable name
+daily_ET_plot <- ggplot(data = daily_ET, aes(x = date)) +
+geom_line(aes(y = allspp_et_m3H2O, color = "Whole System"))+
+#typha
+geom_line(aes(y = typha_et_m3H2O, color = "Typha spp"))+
+#sacstab
+geom_line(aes(y = sacstab_et_m3H2O, color = "S. acutus and S. tabernaemontani"))+
+#scal
+geom_line(aes(y = scal_et_m3H2O, color = "S. californicus"))+
+#sam
+geom_line(aes(y = sam_et_m3H2O, color = "S. americanus"))+
+#formatting
+scale_x_date(date_breaks="1 year", date_labels ="%Y")+
+coord_cartesian(ylim = c(0, 12000))+
+labs(x = "date", y = "daily transpiration (m3 H20)")+
+theme(legend.position="right")+
+theme(legend.key=element_rect(fill='white'))+
+theme(legend.box.spacing=unit(0, "cm"))+
+theme(panel.background = element_rect(fill = 'white'))+
+theme(axis.line.x = element_line())+
+theme(axis.line.y = element_line())+
+theme(plot.margin = unit(c(1, 1, 1, 1), "cm"))+ #top, right, bottom, left
+scale_color_manual("",
+values = c("Whole System"="black", "Typha spp"="green",
+"S. acutus and S. tabernaemontani"="blue", "S. californicus"="red", "S. americanus"="orange"))
+print(daily_ET_plot)
+#exporting graphics
+ggsave("daily_ET.eps", daily_ET_plot, path = '~/Google Drive/WEEL/Tres Rios/water budget/graphics')
+View(daily_ET)
+View(water_budget)
