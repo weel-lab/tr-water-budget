@@ -18,16 +18,16 @@ library("stringr")
 library("lubridate")
 
 #tr met station dat import and formatting
-tr_met <- read.csv('/Volumes/GoogleDrive/My Drive/weel/tres rios/datasets/tr-water-budget/data/tr_metstation_data.csv', stringsAsFactors = FALSE)
+tr_met <- read.csv('/Users/chrissanchez/Documents/weel/tres rios/datasets/tr-water-budget/data/tr_metstation_data.csv', stringsAsFactors = FALSE)
 tr_met[tr_met == ''] <- NA #change all missing values to NA
 tr_met[,3:8] <- sapply(tr_met[,3:8], function(x) as.numeric(x))
 tr_met <- tr_met %>%
   mutate(date = paste(date, hour, sep = " ")) %>% #combine date and hour columns
-  mutate(date = mdy_hm(date)) #read date column as date formatted via lubridate
+  mutate(date = mdy_h(date)) #read date column as date formatted via lubridate
 
 #tr_met quality control
 tr_met <- tr_met %>%
-  mutate(air_temp_f = ifelse(air_temp_f >= 130, NA, air_temp_f)) %>%
+  mutate(air_temp_f = ifelse(air_temp_f >= 125, NA, air_temp_f)) %>%
   mutate(par_w.k2 = ifelse(par_w.k2 >= 1000, NA, par_w.k2)) %>%
   mutate(rh_percent = ifelse(rh_percent >= 101, NA, rh_percent)) %>%
   mutate(wind_speed_m.s = ifelse(wind_speed_m.s >= 40, NA, wind_speed_m.s)) %>%
@@ -39,11 +39,11 @@ tr_met <- tr_met %>%
   mutate(rh_decimal = rh_percent/100)
 
 #goodyear precip data import
-goodyear_daily_precip <- read.csv('/Volumes/GoogleDrive/My Drive/weel/tres rios/datasets/tr-water-budget/data/goodyear_met_jul2011_sep2017.csv')
-goodyear_daily_precip <- mutate(goodyear_daily_precip, date = mdy(date)) #read date column as date formatted via lubridate
+daily_precip <- read.csv('/Users/chrissanchez/Documents/weel/tres rios/datasets/tr-water-budget/data/tr_precip_timeseries.csv')
+daily_precip <- mutate(daily_precip, date = mdy(date)) #read date column as date formatted via lubridate
 
 #scale daily goodyear precip data to month
-goodyear_monthly_precip <- goodyear_daily_precip %>%
+goodyear_monthly_precip <- daily_precip %>%
   group_by(month(date), year(date)) %>%
   summarize(
     monthly_precip_mm = sum(prcp),
@@ -54,7 +54,7 @@ names(goodyear_monthly_precip)[1:2] <- c("month", "year") #rename date columns
 goodyear_monthly_precip <- arrange(goodyear_monthly_precip, year, month)
 
 #frw daily flow data import and edits
-tr_daily_flows <- read.csv('/Volumes/GoogleDrive/My Drive/weel/tres rios/datasets/tr-water-budget/data/tr_waterflow_data.csv', stringsAsFactors = FALSE)
+tr_daily_flows <- read.csv('/Users/chrissanchez/Documents/weel/tres rios/datasets/tr-water-budget/data/tr_waterflow_data.csv', stringsAsFactors = FALSE)
 tr_daily_flows[tr_daily_flows == ''] <- NA #change all missing values to NA
 tr_daily_flows[is.na(tr_daily_flows)] <- 0 #change all NA vla values to NA
 tr_daily_flows <- mutate(tr_daily_flows, date = mdy(date)) #read combined date-hour column as date formatted via lubridate
@@ -79,34 +79,35 @@ tr_monthly_flows <- tr_daily_flows %>%
 names(tr_monthly_flows)[1:2] <- c("month", "year") #rename date columns
 tr_monthly_flows <- arrange(tr_monthly_flows, year, month)
 
-#et data import (data sheet that already contains the CoP weather data)
-hourly_ET <- read.csv('/Volumes/GoogleDrive/My Drive/weel/tres rios/datasets/tr-water-budget/data/time_series_et.csv', stringsAsFactors = FALSE)
+#et met data import (bring in CoP met data to eventually use to calculate IRGApar and IRGAtemp)
+hourly_ET <- read.csv('/Users/chrissanchez/Documents/weel/tres rios/datasets/tr-water-budget/data/tr_metstation_data.csv', stringsAsFactors = FALSE)
 hourly_ET[hourly_ET == ''] <- NA # change all missing values to NA
 
-#converting data classes
-hourly_ET[,3:27] <- sapply(hourly_ET[,3:27], function(x) as.numeric(as.character(x))) #convert all columns except date and hour to numeric
+#converting data classes & trimming dataset for ET calcs
+hourly_ET[,3:8] <- sapply(hourly_ET[,3:8], function(x) as.numeric(as.character(x))) #convert all columns except date and hour to numeric
 hourly_ET$hour <- as.character(hourly_ET$hour) #convert hour column to character (initially integer)
 hourly_ET <- hourly_ET %>%
   mutate(date = paste(date, hour, sep = " ")) %>% #combine date and hour columns
   mutate(date = mdy_h(date)) #read combined date-hour column as date formatted via lubridate
+#use select to remove all columns except those necessary for ET calculations
+hourly_ET <- select(hourly_ET, date, hour, air_temp_f, par_w.k2)
 
 #hourly biomass data import (stop-gap until I can do this part in R)
-hourly_biomass <- read.csv('/Volumes/GoogleDrive/My Drive/weel/tres rios/datasets/tr-water-budget/data/tr_hourly_biomass.csv', stringsAsFactors = FALSE)
+hourly_biomass <- read.csv('/Users/chrissanchez/Documents/weel/tres rios/datasets/tr-water-budget/data/tr_hourly_biomass.csv', stringsAsFactors = FALSE)
 #converting data classes
 hourly_biomass <- hourly_biomass %>%
   mutate(date = paste(date, hour, sep = " ")) %>% #combine date and hour columns
   mutate(date = mdy_h(date)) #read combined date-hour column as date formatted via lubridate
 
-#temporary select to remove all columns past TR_PAR to start fresh and program everything in R
-hourly_ET <- select(hourly_ET, 1:4)
+
 ```
 
 ```{r ET models by species}
 #models
 irga_temp_model <- function(x) 
-  ((0.819*hourly_ET$tr_avg_temp)+9.315)
+  ((0.819*hourly_ET$air_temp_f)+9.315)
 irga_par_model <- function(x) 
-  ((hourly_ET$tr_avg_par*0.769)+88.55)
+  (0.769*(hourly_ET$par_w.k2)+88.55)
 sam_et_model <- function(x)
   ((0.00089*hourly_ET$irga_temp)+(0.0000189*hourly_ET$irga_par)-0.017)
 tlat_et_model <- function(x)
@@ -131,7 +132,7 @@ scal_et_model <- function(x)
 #calculate IRGA temp and PAR
 hourly_ET <- hourly_ET %>%
   mutate(irga_temp = irga_temp_model()) %>%
-  mutate(irga_par = ifelse(tr_avg_par > 1, irga_par_model(), 0))
+  mutate(irga_par = ifelse(par_w.k2 > 1, irga_par_model(), 0))
 
 #calculate ET for each species, as well as two combinations of species (typha and sacstab), in mmol H2O/g*s
 hourly_ET <- hourly_ET %>%
@@ -211,7 +212,7 @@ monthly_ET <- daily_ET %>%
 
 #calculate additional met variables that are used as inputs to penmann-monteith equation
 hourly_water_evap <- tr_met %>%
-  mutate(air_temp_K = air_temp_c + 273) %>%
+  mutate(air_temp_K = air_temp_f + 273) %>%
   mutate(par_mj.m2.hr = par_w.k2*0.0036) %>%
   mutate(bar_press_kPa = bar_press_hg*3.39) %>%
   mutate(slope_vpsatcurve_kPa.K = 0.00000022*exp(0.062*air_temp_K)) %>%
@@ -233,6 +234,11 @@ daily_water_evap <- hourly_water_evap %>%
   ungroup()
 names(daily_water_evap)[1:3] <- c("month", "day", "year") #rename first three columns
 daily_water_evap <- arrange(daily_water_evap, year, month, day)
+
+daily_water_evap <- daily_water_evap %>%
+  mutate(date = paste(month, day, year, sep = "/")) %>%
+  mutate(date = mdy(date)) %>%
+  arrange(date)
 
 #scale daily evap sums to monthly sums
 monthly_water_evap <- daily_water_evap %>%
@@ -261,15 +267,28 @@ water_budget <- water_budget_inputs %>%
 
 ```
 
+*EXPORT DATA*
+
+```{r RESULTS EXPORT}
+
+#write certain datasheets as csv to the current working directory
+
+write.csv(water_budget, file = "/Users/chrissanchez/Documents/weel/tres rios/datasets/tr-water-budget/results/tr_water_budget.csv")
+write.csv(daily_ET, file = "/Users/chrissanchez/Documents/weel/tres rios/datasets/tr-water-budget/results/tr_daily_ET.csv")
+write.csv(daily_water_evap, file = "/Users/chrissanchez/Documents/weel/tres rios/datasets/tr-water-budget/results/tr_daily_water_evap.csv")
+
+
+```
+
+
 
 1) As of 8/23, hourly_ET only goes through "2016-07-31 01:00:00". So select for all dates before that
 2) See if there is a way to get all dates consistently copied over from initial CoP data. In most cases the dates from those spreadsheets already contain time info embedded (though may not be consistent pre-2014). If so, then you cna eliminate manually updating in hours column in excel and edit code lines 24-38 to just extract mdyh from date column
  -building off of this, is there a way to run this just starting from the tr_weather_alldata.csv file?
 3) need to see if there's a way to resolve issue in tr_metstation_data.csv - how to get hourly data pre-2012? this would allow me to just use tr_metstation_data as the starting point for hourly_et process
 
-20101029 - with respect to item 3 above, this seems to cause me to need to bring in this random old timeseries_et file. can I just take the CoP data from there and paste it into the CoP met data?
+20181029 - with respect to item 3 above, this seems to cause me to need to bring in this random old timeseries_et file. can I just take the CoP data from there and paste it into the CoP met data?
 need to notate new data source for precip - used to be godo year but now 
-
-Add a new chunk by clicking the *Insert Chunk* button on the toolbar or by pressing *Cmd+Option+I*.
-
-When you save the notebook, an HTML file containing the code and output will be saved alongside it (click the *Preview* button or press *Cmd+Shift+K* to preview the HTML file).
+20181030 - THIS HAS BEEN FIXED! Eliminated the need for "timeseries_et", can now just use met station file for all ET calcs
+-also, air_temp in tr_met is already in C, need to remove code that does this conversion and fix the labeling of this in the Evap calculations
+-also need to find a way to generate a QC'd version of TR_metstation_data to use for ET calcs...otherwise this is causing huge spikes where there is a QC issue in hourly temperature data.
